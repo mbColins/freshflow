@@ -1,0 +1,86 @@
+// Stage colors are a fixed, colorblind-validated order; keep color tied to the stage, not its position
+export const STAGES = [
+  {
+    id: 'intake',
+    step: '01',
+    short: 'Intake',
+    label: 'Received',
+    count: 14,
+    share: 12,
+    load: 35,
+    detail: '82 items · ~25m wait',
+    color: '#2a78d6',
+  },
+  {
+    id: 'wash',
+    step: '02',
+    short: 'Wash',
+    label: 'Washing',
+    count: 32,
+    share: 18,
+    load: 80,
+    detail: '194 items · 8 washers',
+    color: '#eb6834',
+  },
+  {
+    id: 'dry',
+    step: '03',
+    short: 'Dry',
+    label: 'Drying',
+    count: 18,
+    share: 14,
+    load: 55,
+    detail: '112 items · 5 dryers',
+    color: '#1baf7a',
+  },
+  {
+    id: 'press',
+    step: '04',
+    short: 'Press',
+    label: 'Ironing & Press',
+    count: 27,
+    share: 16,
+    load: 65,
+    detail: '88 items · 3 presses',
+    color: '#eda100',
+  },
+  {
+    id: 'qa',
+    step: '05',
+    short: 'QA Check',
+    label: 'Quality Check',
+    count: 9,
+    share: 8,
+    load: 25,
+    detail: '45 items · 1 flagged',
+    color: '#6250d6',
+  },
+  {
+    id: 'ready',
+    step: '06',
+    short: 'Ready',
+    label: 'Ready for Pickup',
+    count: 41,
+    share: 22,
+    load: 90,
+    detail: '210 items · Staged Bay A',
+    color: '#008300',
+  },
+  {
+    id: 'route',
+    step: '07',
+    short: 'Route',
+    label: 'Out for Delivery',
+    count: 12,
+    share: 10,
+    load: 40,
+    detail: '64 items · 3 vans en route',
+    color: '#e87ba4',
+  },
+] as const
+
+export type StageId = (typeof STAGES)[number]['id']
+
+export function getStage(id: StageId) {
+  return STAGES.find((stage) => stage.id === id)!
+}
