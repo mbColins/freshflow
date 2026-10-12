@@ -194,7 +194,7 @@ const SEEDS: Seed[] = [
 ]
 
 const slug = (name: string) =>
-  name.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')
+  name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')
 
 // TODO: replace with the branches API
 export const SAMPLE_BRANCHES: Branch[] = SEEDS.map((seed, index) => {

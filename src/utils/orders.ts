@@ -10,6 +10,7 @@ import type {
   OrderStatus,
   PaymentStatus,
 } from '../types/order'
+import { getSettings } from '../hooks/useSettings'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
@@ -110,8 +111,9 @@ function formatDay(iso: string, now: number) {
 }
 
 export function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('en-GB', {
-    hour: '2-digit',
+  const twelveHour = getSettings().timeFormat === '12h'
+  return new Date(iso).toLocaleTimeString(twelveHour ? 'en-US' : 'en-GB', {
+    hour: twelveHour ? 'numeric' : '2-digit',
     minute: '2-digit',
   })
 }

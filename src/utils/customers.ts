@@ -11,6 +11,8 @@ import type {
 } from '../types/customer'
 import type { Customer, PaymentMethod } from '../types/order'
 import { formatXaf } from './orders'
+import { getSettings } from '../hooks/useSettings'
+import { formatDateSetting } from './settings'
 
 const DAY_MS = 86_400_000
 
@@ -24,6 +26,8 @@ export function getInitials(name: string) {
 }
 
 export function formatDate(iso: string) {
+  const chosen = formatDateSetting(new Date(iso), getSettings())
+  if (chosen) return chosen
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

@@ -65,26 +65,8 @@ function LoginForm() {
         )}
 
         <fieldset>
-          <legend className={labelClass}>Select Operating Role</legend>
-          <div className="mt-2 grid grid-cols-3 gap-1 rounded-md bg-field p-1">
-            {ROLES.map(({ value, label, icon: Icon }) => (
-              <label
-                key={value}
-                className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md text-xs font-semibold text-muted transition hover:text-ink has-checked:bg-white has-checked:text-brand has-checked:shadow-sm has-focus-visible:ring-2 has-focus-visible:ring-brand"
-              >
-                <input
-                  type="radio"
-                  name="role"
-                  value={value}
-                  checked={role === value}
-                  onChange={() => setRole(value)}
-                  className="sr-only"
-                />
-                <Icon className="size-4" aria-hidden="true" />
-                {label}
-              </label>
-            ))}
-          </div>
+         
+         
         </fieldset>
 
         <div>

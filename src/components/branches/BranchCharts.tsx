@@ -1,17 +1,17 @@
 import { useState } from 'react'
 import { formatRevenue } from '../../utils/branches'
 
-const WIDTH = 640
-const HEIGHT = 220
-const PAD = { left: 56, right: 14, top: 12, bottom: 26 }
 // Validated chart colours: series blue, with the comparison period in recessive grey
 const CURRENT_COLOR = '#2a78d6'
 const PREVIOUS_COLOR = '#94a3b8'
+const GRID_SHARES = [0, 0.5, 1]
 
 function niceMax(value: number) {
   if (value <= 0) return 1
   const magnitude = 10 ** Math.floor(Math.log10(value))
-  return [1, 2, 2.5, 5, 10].map((step) => step * magnitude).find((step) => step >= value)!
+  return [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+    .map((step) => step * magnitude)
+    .find((step) => step >= value)!
 }
 
 export function RevenueChart({
@@ -25,81 +25,97 @@ export function RevenueChart({
 }) {
   const [hover, setHover] = useState<number | null>(null)
   const max = niceMax(Math.max(...current, ...(previous ?? [])))
-  const plotWidth = WIDTH - PAD.left - PAD.right
-  const plotHeight = HEIGHT - PAD.top - PAD.bottom
-  const x = (index: number) => PAD.left + (index * plotWidth) / Math.max(labels.length - 1, 1)
-  const y = (value: number) => PAD.top + (1 - value / max) * plotHeight
+  const lastIndex = Math.max(labels.length - 1, 1)
+  // Positions are percentages of the plot, so the lines stretch while the text stays crisp
+  const x = (index: number) => (index / lastIndex) * 100
+  const y = (value: number) => (1 - value / max) * 100
   const path = (values: number[]) =>
-    values.map((value, index) => `${index === 0 ? 'M' : 'L'}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(' ')
-  const band = plotWidth / Math.max(labels.length - 1, 1)
-  // Show at most ~7 axis labels so they never collide
-  const labelEvery = Math.ceil(labels.length / 7)
+    values.map((value, index) => `${index === 0 ? 'M' : 'L'}${x(index).toFixed(2)},${y(value).toFixed(2)}`).join(' ')
+  // Show at most ~5 axis labels so they never collide, even on a phone
+  const labelEvery = Math.ceil(labels.length / 5)
 
   return (
-    <figure>
-      <div className="relative">
-        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="block h-auto w-full" role="img" aria-label="Revenue over time; the data table follows">
-          {[0, 0.5, 1].map((share) => (
-            <g key={share}>
-              <line x1={PAD.left} x2={WIDTH - PAD.right} y1={y(max * share)} y2={y(max * share)} stroke="#e2e8f0" strokeWidth={1} />
-              <text x={PAD.left - 8} y={y(max * share) + 3} textAnchor="end" fontSize={10} fill="#64748b">
-                {formatRevenue(max * share).replace('XAF ', '')}
-              </text>
-            </g>
-          ))}
+    <figure className="relative">
+      <div className="relative h-56">
+        {GRID_SHARES.map((share) => (
+          <span
+            key={share}
+            className="absolute left-0 w-11 -translate-y-1/2 pr-1.5 text-right text-[10px] text-muted tabular-nums"
+            style={{ top: `calc(8px + (100% - 32px) * ${1 - share})` }}
+            aria-hidden="true"
+          >
+            {formatRevenue(max * share).replace('XAF ', '')}
+          </span>
+        ))}
+        <div
+          className="absolute top-2 right-2 bottom-6 left-11"
+          onPointerMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const share = (event.clientX - rect.left) / rect.width
+            setHover(Math.min(lastIndex, Math.max(0, Math.round(share * lastIndex))))
+          }}
+          onPointerLeave={() => setHover(null)}
+        >
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="block size-full overflow-visible"
+            role="img"
+            aria-label="Revenue over time; the data table follows"
+          >
+            {GRID_SHARES.map((share) => (
+              <line key={share} x1={0} x2={100} y1={y(max * share)} y2={y(max * share)} stroke="#e2e8f0" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            ))}
+            {hover !== null && (
+              <line x1={x(hover)} x2={x(hover)} y1={0} y2={100} stroke="#94a3b8" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            )}
+            {previous && (
+              <path d={path(previous)} fill="none" stroke={PREVIOUS_COLOR} strokeWidth={2} strokeDasharray="5 4" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+            )}
+            <path d={path(current)} fill="none" stroke={CURRENT_COLOR} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          </svg>
+          {hover !== null &&
+            [
+              ...(previous ? [[previous[hover], PREVIOUS_COLOR] as const] : []),
+              [current[hover], CURRENT_COLOR] as const,
+            ].map(([value, color]) => (
+              <span
+                key={color}
+                className="pointer-events-none absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white"
+                style={{ left: `${x(hover)}%`, top: `${y(value)}%`, background: color }}
+                aria-hidden="true"
+              />
+            ))}
+          {hover !== null && (
+            <div
+              className="pointer-events-none absolute top-0 z-10 rounded-md bg-ink px-2.5 py-1.5 text-[11px] whitespace-nowrap text-white shadow-lg"
+              style={{
+                left: `${x(hover)}%`,
+                transform: `translateX(${hover > lastIndex / 2 ? 'calc(-100% - 10px)' : '10px'})`,
+              }}
+            >
+              <p className="font-semibold">{labels[hover]}</p>
+              <p>Current: <span className="font-bold tabular-nums">{formatRevenue(current[hover], false)}</span></p>
+              {previous && (
+                <p className="text-white/75">Previous: <span className="tabular-nums">{formatRevenue(previous[hover], false)}</span></p>
+              )}
+            </div>
+          )}
           {labels.map((label, index) =>
             (labels.length - 1 - index) % labelEvery === 0 ? (
-              <text
+              <span
                 key={label}
-                x={x(index)}
-                y={HEIGHT - 8}
-                textAnchor={index === labels.length - 1 ? 'end' : index === 0 ? 'start' : 'middle'}
-                fontSize={10}
-                fill="#64748b"
+                className={`absolute top-full mt-1.5 text-[10px] whitespace-nowrap text-muted ${
+                  index === labels.length - 1 ? '-translate-x-full' : index === 0 ? '' : '-translate-x-1/2'
+                }`}
+                style={{ left: `${x(index)}%` }}
+                aria-hidden="true"
               >
                 {label.replace('Week to ', '')}
-              </text>
+              </span>
             ) : null,
           )}
-          {previous && (
-            <path d={path(previous)} fill="none" stroke={PREVIOUS_COLOR} strokeWidth={2} strokeDasharray="5 4" strokeLinejoin="round" />
-          )}
-          <path d={path(current)} fill="none" stroke={CURRENT_COLOR} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-          {hover !== null && (
-            <g>
-              <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={HEIGHT - PAD.bottom} stroke="#94a3b8" strokeWidth={1} />
-              {previous && <circle cx={x(hover)} cy={y(previous[hover])} r={4} fill={PREVIOUS_COLOR} stroke="#fff" strokeWidth={2} />}
-              <circle cx={x(hover)} cy={y(current[hover])} r={4} fill={CURRENT_COLOR} stroke="#fff" strokeWidth={2} />
-            </g>
-          )}
-          {labels.map((label, index) => (
-            <rect
-              key={label}
-              x={x(index) - band / 2}
-              y={PAD.top}
-              width={band}
-              height={plotHeight}
-              fill="transparent"
-              onPointerEnter={() => setHover(index)}
-              onPointerLeave={() => setHover(null)}
-            />
-          ))}
-        </svg>
-        {hover !== null && (
-          <div
-            className="pointer-events-none absolute top-0 z-10 rounded-md bg-ink px-2.5 py-1.5 text-[11px] whitespace-nowrap text-white shadow-lg"
-            style={{
-              left: `${(x(hover) / WIDTH) * 100}%`,
-              transform: `translateX(${hover > labels.length / 2 ? 'calc(-100% - 8px)' : '8px'})`,
-            }}
-          >
-            <p className="font-semibold">{labels[hover]}</p>
-            <p>Current: <span className="font-bold tabular-nums">{formatRevenue(current[hover], false)}</span></p>
-            {previous && (
-              <p className="text-white/75">Previous: <span className="tabular-nums">{formatRevenue(previous[hover], false)}</span></p>
-            )}
-          </div>
-        )}
+        </div>
       </div>
       {previous && (
         <figcaption className="mt-2 flex flex-wrap gap-4 text-[11px] text-muted">

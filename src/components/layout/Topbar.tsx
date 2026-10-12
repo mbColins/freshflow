@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
-import { Bell, CalendarDays, Menu, Plus, Search, Store } from 'lucide-react'
+import { CalendarDays, Menu, Plus, Search, Store } from 'lucide-react'
+import NotificationBell from './NotificationBell'
 
 const BRANCHES = ['Downtown Branch', 'Akwa Branch', 'Bonapriso Branch']
 const DATE_RANGES = ['Today', 'Yesterday', 'Last 7 days', 'This month']
-const NOTIFICATION_COUNT = 4
 
 const selectClass =
   'h-9 cursor-pointer appearance-none rounded-md bg-field pr-3 pl-8 text-xs font-semibold text-ink outline-none transition focus:ring-2 focus:ring-brand'
@@ -83,16 +83,7 @@ function Topbar({ onOpenMenu }: TopbarProps) {
           New Order
         </Link>
 
-        <button
-          type="button"
-          aria-label={`Notifications, ${NOTIFICATION_COUNT} unread`}
-          className="relative flex size-9 items-center justify-center rounded-md text-muted transition hover:bg-field hover:text-ink focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
-        >
-          <Bell className="size-4" aria-hidden="true" />
-          <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-danger text-[9px] font-bold text-white">
-            {NOTIFICATION_COUNT}
-          </span>
-        </button>
+        <NotificationBell />
 
         <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">
           MV

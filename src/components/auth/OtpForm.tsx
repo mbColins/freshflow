@@ -8,6 +8,7 @@ import {
   Phone,
   Smartphone,
 } from 'lucide-react'
+import { getSettings } from '../../hooks/useSettings'
 import AuthFooter from './AuthFooter'
 import AuthHeader from './AuthHeader'
 
@@ -95,7 +96,7 @@ function OtpForm() {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     // TODO: send digits.join('') to the auth API and only continue if it is valid
-    navigate(isRecovery ? '/reset-password' : '/', { replace: true })
+    navigate(isRecovery ? '/reset-password' : getSettings().startPage, { replace: true })
   }
 
   return (

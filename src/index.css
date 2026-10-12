@@ -34,3 +34,54 @@
     display: none;
   }
 }
+
+/* ---------- Application settings (set on <html> by utils/settings.ts) ---------- */
+
+/* Text size: rem-based sizes follow the root font size; these fixed small sizes are scaled by hand */
+:root {
+  --text-scale: 1;
+}
+.text-\[9px\] {
+  font-size: calc(9px * var(--text-scale));
+}
+.text-\[10px\] {
+  font-size: calc(10px * var(--text-scale));
+}
+.text-\[11px\] {
+  font-size: calc(11px * var(--text-scale));
+}
+
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
+  scroll-behavior: auto !important;
+}
+
+/* Dark theme: the colour tokens flip, and white surfaces become dark panels */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-ink: #e5e9f2;
+  --color-muted: #94a3b8;
+  --color-line: #26324a;
+  --color-canvas: #0b1120;
+  --color-field: #1b2538;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+}
+:root[data-theme='dark'] .bg-white,
+:root[data-theme='dark'] .hover\:bg-white:hover,
+:root[data-theme='dark'] .focus\:bg-white:focus,
+:root[data-theme='dark'] .has-checked\:bg-white:has(:checked),
+:root[data-theme='dark'] [class~='bg-white/90'] {
+  background-color: #131c2e;
+}
+/* Toasts and tooltips keep white text, so they need a dark surface of their own */
+:root[data-theme='dark'] .bg-ink {
+  background-color: #334155;
+}
+:root[data-theme='dark'] dialog::backdrop {
+  background-color: rgb(0 0 0 / 0.6);
+}

@@ -46,7 +46,7 @@ const TIER_STYLES = {
 export function HealthMeter({ health, compact = false }: { health: number | null; compact?: boolean }) {
   const tier = getPerformanceTier(health)
   if (health === null || tier === null) {
-    return <span className="text-[11px] text-muted">{compact ? '—' : 'No health score while not operating'}</span>
+    return <span className="text-[11px] text-muted">{compact ? '—' : 'No health score available'}</span>
   }
   const styles = TIER_STYLES[tier]
   return (

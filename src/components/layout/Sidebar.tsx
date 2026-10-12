@@ -21,6 +21,9 @@ import {
   Users,
   WashingMachine,
 } from 'lucide-react'
+import useNotifications from '../../hooks/useNotifications'
+import useSettings from '../../hooks/useSettings'
+import { translate } from '../../utils/settings'
 
 type NavItem = {
   label: string
@@ -40,23 +43,23 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { label: 'Orders', icon: ClipboardList, badge: '86', to: '/orders' },
       { label: 'Customers', icon: Users, to: '/customers' },
       { label: 'Services', icon: Shirt, to: '/services' },
-      { label: 'Laundry Operations', icon: WashingMachine },
+      { label: 'Laundry Operations', icon: WashingMachine, to: '/operations' },
       { label: 'Pickup & Delivery', icon: Truck, to: '/pickup-delivery' },
       { label: 'Payments', icon: CreditCard, to: '/payments' },
       { label: 'Inventory', icon: Package, badge: '2', to: '/inventory' },
       { label: 'Staff', icon: UserCog, to: '/staff' },
       { label: 'Reports', icon: ChartColumn },
-      { label: 'Notifications', icon: Bell },
+      { label: 'Notifications', icon: Bell, to: '/notifications' },
     ],
   },
   {
     title: 'Management',
     items: [
-      { label: 'Branches', icon: Store },
-      { label: 'Machines', icon: Cpu },
-      { label: 'Pricing', icon: Tag },
-      { label: 'Promotions', icon: Megaphone },
-      { label: 'Settings', icon: Settings },
+      { label: 'Branches', icon: Store, to: '/branches' },
+      { label: 'Machines', icon: Cpu, to: '/machines' },
+      { label: 'Pricing', icon: Tag, to: '/pricing' },
+      { label: 'Promotions', icon: Megaphone, to: '/promotions' },
+      { label: 'Settings', icon: Settings, to: '/settings' },
     ],
   },
 ]
@@ -74,6 +77,13 @@ function Sidebar({
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
+  const { language, showNavBadges } = useSettings()
+  const { notifications } = useNotifications()
+  // Same count as the bell: unread alerts addressed to staff
+  const unread = notifications.filter(
+    (item) => !item.read && !item.archived && item.delivery !== 'scheduled' && item.audience !== 'customer',
+  ).length
+  const t = (text: string) => translate(text, language)
   // Labels stay visible in the mobile drawer; only the desktop rail collapses
   const labelClass = collapsed ? 'lg:hidden' : ''
 
@@ -115,17 +125,18 @@ function Sidebar({
               <p
                 className={`px-2 pb-1.5 text-[9px] font-bold tracking-wider text-muted uppercase ${labelClass}`}
               >
-                {group.title}
+                {t(group.title)}
               </p>
               <ul className="space-y-0.5">
-                {group.items.map(({ label, icon: Icon, badge, to }) => {
+                {group.items.map(({ label, icon: Icon, badge: fixedBadge, to }) => {
+                  const badge = to === '/notifications' ? (unread > 0 ? String(unread) : undefined) : fixedBadge
                   const content = (
                     <>
                       <Icon className="size-4 shrink-0" aria-hidden="true" />
                       <span className={`flex-1 truncate ${labelClass}`}>
-                        {label}
+                        {t(label)}
                       </span>
-                      {badge && (
+                      {badge && showNavBadges && (
                         <span
                           className={`rounded-full bg-brand/10 px-1.5 text-[10px] font-bold text-brand in-aria-[current=page]:bg-white/20 in-aria-[current=page]:text-white ${labelClass}`}
                         >
@@ -141,7 +152,7 @@ function Sidebar({
                           to={to}
                           end={to === '/'}
                           onClick={onCloseMobile}
-                          title={collapsed ? label : undefined}
+                          title={collapsed ? t(label) : undefined}
                           className={`${itemClass} aria-[current=page]:bg-brand aria-[current=page]:text-white aria-[current=page]:hover:bg-brand`}
                         >
                           {content}
@@ -150,7 +161,7 @@ function Sidebar({
                         // Pages that don't exist yet
                         <button
                           type="button"
-                          title={collapsed ? label : undefined}
+                          title={collapsed ? t(label) : undefined}
                           className={itemClass}
                         >
                           {content}
@@ -179,8 +190,8 @@ function Sidebar({
             </div>
             <Link
               to="/login"
-              aria-label="Sign out"
-              title="Sign out"
+              aria-label={t('Sign out')}
+              title={t('Sign out')}
               className={`flex size-7 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-field hover:text-ink focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none ${labelClass}`}
             >
               <LogOut className="size-4" aria-hidden="true" />
@@ -198,7 +209,7 @@ function Sidebar({
               <PanelLeftClose className="size-4" aria-hidden="true" />
             )}
             <span className={collapsed ? 'sr-only' : ''}>
-              {collapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+              {t(collapsed ? 'Expand Sidebar' : 'Collapse Sidebar')}
             </span>
           </button>
         </div>
