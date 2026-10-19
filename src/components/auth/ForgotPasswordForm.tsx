@@ -1,5 +1,5 @@
-import { useId, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useId } from 'react'
+import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 import {
   ArrowLeft,
@@ -9,18 +9,42 @@ import {
   MailCheck,
   Phone,
 } from 'lucide-react'
+import { useForgotPasswordMutation } from '../../services/authApi'
+import { errorMessage } from '../../utils/apiErrors'
+import FormAlert from '../ui/FormAlert'
 import AuthFooter from './AuthFooter'
 import AuthHeader from './AuthHeader'
+
+type ForgotPasswordValues = {
+  email: string
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 function ForgotPasswordForm() {
   const id = useId()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<ForgotPasswordValues>({ defaultValues: { email: '' } })
+  const [forgotPassword, { error }] = useForgotPasswordMutation()
+  // Deliberately vague: saying the account doesn't exist would let anyone
+  // check which emails are registered
+  const message = errorMessage(
+    error,
+    "We couldn't send a code to that email. Check the address and try again.",
+  )
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    // TODO: send { email } to the auth API to dispatch the reset OTP
-    navigate('/verify', { state: { flow: 'recovery' } })
+  async function onSubmit({ email }: ForgotPasswordValues) {
+    try {
+      // Stores the pending code for OtpForm (see authApi)
+      await forgotPassword({ email: email.trim() }).unwrap()
+      navigate('/verify', { state: { flow: 'recovery' } })
+    } catch {
+      // `error` drives the message above the field
+    }
   }
 
   return (
@@ -34,8 +58,12 @@ function ForgotPasswordForm() {
         Enter your verified operator email  to receive a password reset otp.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-  
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        noValidate
+        className="mt-5 space-y-4"
+      >
+        {message && <FormAlert>{message}</FormAlert>}
 
         <div>
           <label
@@ -51,17 +79,33 @@ function ForgotPasswordForm() {
             />
             <input
               id={`${id}-email`}
-              name="email"
               type="email"
               autoComplete="email"
-              required
               placeholder="e.g. operator.name@freshflow.io"
-              aria-describedby={`${id}-email-hint`}
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="h-11 w-full rounded-md bg-field pr-3 pl-10 text-sm font-medium text-ink outline-none transition placeholder:font-normal placeholder:text-muted/70 focus:bg-white focus:ring-2 focus:ring-brand"
+              aria-invalid={errors.email ? true : undefined}
+              aria-describedby={
+                errors.email
+                  ? `${id}-email-error ${id}-email-hint`
+                  : `${id}-email-hint`
+              }
+              {...register('email', {
+                validate: (value) =>
+                  value.trim() === ''
+                    ? 'Enter your email.'
+                    : EMAIL_PATTERN.test(value.trim()) ||
+                      'Enter a valid email address.',
+              })}
+              className="h-11 w-full rounded-md bg-field pr-3 pl-10 text-sm font-medium text-ink outline-none transition placeholder:font-normal placeholder:text-muted/70 focus:bg-white focus:ring-2 focus:ring-brand aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger"
             />
           </div>
+          {errors.email && (
+            <p
+              id={`${id}-email-error`}
+              className="mt-1.5 text-[11px] font-semibold text-danger"
+            >
+              {errors.email.message}
+            </p>
+          )}
           <p
             id={`${id}-email-hint`}
             className="mt-2 flex items-center gap-2 text-[11px] text-muted"
@@ -75,13 +119,12 @@ function ForgotPasswordForm() {
           </p>
         </div>
 
-    
-
         <button
           type="submit"
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand text-sm font-bold text-white shadow-lg shadow-brand/25 transition hover:bg-brand-dark focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:outline-none"
+          disabled={isSubmitting}
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand text-sm font-bold text-white shadow-lg shadow-brand/25 transition hover:bg-brand-dark focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
         >
-          Send Reset Otp &amp; Instructions
+          {isSubmitting ? 'Sending…' : 'Send Reset Otp & Instructions'}
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
 

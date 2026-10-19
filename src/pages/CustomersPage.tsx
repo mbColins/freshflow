@@ -38,8 +38,9 @@ import {
 } from '../constants/customers'
 import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
 import type { PreviewState } from '../constants/orders'
-import { getSampleOrders } from '../constants/sampleCustomers'
-import useCustomers, { customerStore } from '../hooks/useCustomers'
+import { getSampleOrders } from '../constants/sampleOrders'
+import { useBranchLookup, useChangeCustomers, useCustomersQuery } from '../hooks/useCustomers'
+import { useCreateCustomerMutation, useDeleteCustomerMutation } from '../services/customerApi'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
 import type {
@@ -53,6 +54,7 @@ import {
   applyPayment,
   compareCustomers,
   countCustomerFilters,
+  customerRequest,
   customersToCsv,
   matchesCustomerFilters,
 } from '../utils/customers'
@@ -67,7 +69,12 @@ type DialogName = 'add' | 'import' | 'campaign' | 'filters'
 function CustomersPage() {
   const now = useNow()
   const navigate = useNavigate()
-  const allCustomers = useCustomers()
+  const customersQuery = useCustomersQuery()
+  const allCustomers = customersQuery.items
+  const changeCustomers = useChangeCustomers()
+  const [createCustomer] = useCreateCustomerMutation()
+  const [deleteCustomer] = useDeleteCustomerMutation()
+  const { uuidOf } = useBranchLookup()
   const [role, setRole] = useLocalStorage<OrderRole>('customers.role', 'manager')
   const [preview, setPreview] = useState<PreviewState>('normal')
   const [filters, setFilters] = useState<CustomerFilters>(EMPTY_CUSTOMER_FILTERS)
@@ -96,8 +103,15 @@ function CustomersPage() {
   const permissions = CUSTOMER_PERMISSIONS[role]
   const canCreateOrder = PERMISSIONS[role].create
 
+  // The preview switch overrides what the request says, for checking layouts
+  const loadState: PreviewState = customersQuery.isLoading
+    ? 'loading'
+    : customersQuery.isError && allCustomers.length === 0
+      ? 'error'
+      : 'normal'
+  const shown = preview === 'normal' ? loadState : preview
   const customers =
-    preview === 'empty' ? [] : allCustomers.filter(({ archived }) => !archived)
+    shown === 'empty' ? [] : allCustomers.filter(({ archived }) => !archived)
   const filtered = customers
     .filter((customer) =>
       matchesCustomerFilters(
@@ -161,36 +175,52 @@ function CustomersPage() {
     })
   }
 
-  function handleSave(customer: CrmCustomer, createOrder: boolean) {
-    customerStore.add([customer])
+  // The list reloads on its own to show the new customer
+  function handleSaved(customer: CrmCustomer, createOrder: boolean, id: string | null) {
     setDialog(null)
     if (createOrder) {
-      navigate(`/orders?new=1&customer=${customer.id}`)
+      navigate(id ? `/orders?new=1&customer=${encodeURIComponent(id)}` : '/orders?new=1')
       return
     }
-    setToast(`${customer.name} added as ${customer.id}`)
+    setToast(id ? `${customer.name} added as ${id}` : `${customer.name} added`)
   }
 
-  function requestArchive(ids: string[]) {
+  // Applies a change to the selected customers and reports any the server refused
+  async function changeSelected(apply: (customer: CrmCustomer) => CrmCustomer, done: string) {
+    const refused = await changeCustomers(selected, apply)
+    setToast(refused ? `${done}, but ${refused} couldn’t be saved. Try again.` : done)
+  }
+
+  // DELETE /customer/{id}, one call per customer
+  function requestDelete(ids: string[]) {
     setConfirm({
       title:
-        ids.length === 1 ? 'Archive this customer?' : `Archive ${ids.length} customers?`,
-      body: 'Archived customers disappear from the list and can no longer be selected for new orders. Their order and payment history is kept.',
-      confirmLabel: 'Archive',
+        ids.length === 1 ? 'Delete this customer?' : `Delete ${ids.length} customers?`,
+      body: 'They are removed from the system and can no longer be selected for new orders. This can’t be undone.',
+      confirmLabel: 'Delete',
       destructive: true,
-      onConfirm: () => {
-        customerStore.update(ids, (customer) => ({ ...customer, archived: true }))
+      onConfirm: async () => {
+        let deleted = 0
+        for (const id of ids) {
+          try {
+            await deleteCustomer(id).unwrap()
+            deleted += 1
+          } catch {
+            // Counted below
+          }
+        }
         setSelectedIds([])
+        const failed = ids.length - deleted
         setToast(
-          ids.length === 1 ? 'Customer archived' : `${ids.length} customers archived`,
+          (deleted === 1 ? 'Customer deleted' : `${deleted} customers deleted`) +
+            (failed ? `; ${failed} couldn’t be deleted` : ''),
         )
       },
     })
   }
 
   function applyStatus(status: CustomerStatus) {
-    customerStore.update(selectedIds, (customer) => ({ ...customer, status }))
-    setToast(`Status changed for ${selectedIds.length} customers`)
+    void changeSelected((customer) => ({ ...customer, status }), `Status changed for ${selectedIds.length} customers`)
   }
 
   function handleChangeStatus(status: CustomerStatus) {
@@ -235,8 +265,8 @@ function CustomersPage() {
         onCampaign={() => setDialog('campaign')}
       />
 
-      {preview === 'loading' && <OrdersSkeleton />}
-      {preview === 'error' && (
+      {shown === 'loading' && <OrdersSkeleton />}
+      {shown === 'error' && (
         <div
           role="alert"
           className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line"
@@ -247,7 +277,10 @@ function CustomersPage() {
           </h2>
           <button
             type="button"
-            onClick={() => setPreview('normal')}
+            onClick={() => {
+              setPreview('normal')
+              void customersQuery.refetch()
+            }}
             className={`${primaryButton} mt-2`}
           >
             <RefreshCw className="size-4" aria-hidden="true" />
@@ -256,7 +289,7 @@ function CustomersPage() {
         </div>
       )}
 
-      {(preview === 'normal' || preview === 'empty') && (
+      {(shown === 'normal' || shown === 'empty') && (
         <>
           <CustomerKpiCards
             customers={customers}
@@ -308,23 +341,20 @@ function CustomersPage() {
               onClear={() => setSelectedIds([])}
               onMessage={() => setDialog('campaign')}
               onExport={() => handleExport(selected)}
-              onAssignBranch={(branch) => {
-                customerStore.update(selectedIds, (customer) => ({
-                  ...customer,
-                  branch,
-                }))
-                setToast(`${selectedIds.length} customers assigned to ${branch}`)
-              }}
-              onChangeStatus={handleChangeStatus}
-              onAddTag={(tag) => {
-                customerStore.update(selectedIds, (customer) =>
-                  customer.tags.includes(tag)
-                    ? customer
-                    : { ...customer, tags: [...customer.tags, tag] },
+              onAssignBranch={(branch) =>
+                void changeSelected(
+                  (customer) => ({ ...customer, branch, branchId: uuidOf(branch) }),
+                  `${selectedIds.length} customers assigned to ${branch}`,
                 )
-                setToast(`Tag “${tag}” added to ${selectedIds.length} customers`)
-              }}
-              onArchive={() => requestArchive(selectedIds)}
+              }
+              onChangeStatus={handleChangeStatus}
+              onAddTag={(tag) =>
+                void changeSelected(
+                  (customer) => (customer.tags.includes(tag) ? customer : { ...customer, tags: [...customer.tags, tag] }),
+                  `Tag “${tag}” added to ${selectedIds.length} customers`,
+                )
+              }
+              onArchive={() => requestDelete(selectedIds)}
             />
           )}
 
@@ -388,7 +418,7 @@ function CustomersPage() {
                 permissions={permissions}
                 canCreateOrder={canCreateOrder}
                 onRecordPayment={setPaymentId}
-                onArchive={(id) => requestArchive([id])}
+                onArchive={(id) => requestDelete([id])}
               />
 
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
@@ -478,17 +508,27 @@ function CustomersPage() {
         <CustomerFormDialog
           canManage={permissions.manage}
           onClose={() => setDialog(null)}
-          onSave={handleSave}
+          onSaved={handleSaved}
         />
       )}
       {dialog === 'import' && (
         <CustomerImportDialog
           existing={allCustomers}
           onClose={() => setDialog(null)}
-          onImport={(imported) => {
-            customerStore.add(imported)
+          onImport={async (imported) => {
             setDialog(null)
-            setToast(`${imported.length} customers imported`)
+            // One POST per row, in order
+            let created = 0
+            for (const customer of imported) {
+              try {
+                await createCustomer(customerRequest(customer, uuidOf(customer.branch))).unwrap()
+                created += 1
+              } catch {
+                // Counted below
+              }
+            }
+            const refused = imported.length - created
+            setToast(`${created} customers imported` + (refused ? `; ${refused} refused by the server` : ''))
           }}
         />
       )}
@@ -510,7 +550,9 @@ function CustomersPage() {
           customer={paymentCustomer}
           onClose={() => setPaymentId(null)}
           onSubmit={(amount, method, reference) => {
-            customerStore.update([paymentCustomer.id], (customer) =>
+            // No payments endpoint yet, so this stays on screen only
+            // TODO: record it through the payments API
+            void changeCustomers([paymentCustomer], (customer) =>
               applyPayment(customer, amount, method, reference, CURRENT_USER),
             )
             setPaymentId(null)

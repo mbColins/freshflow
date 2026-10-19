@@ -1,6 +1,5 @@
 import { Link } from 'react-router'
 import {
-  Archive,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -10,6 +9,7 @@ import {
   Download,
   Ellipsis,
   Eye,
+  Trash2,
   Megaphone,
   MessageCircle,
   Phone,
@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { CUSTOMER_STATUSES, CUSTOMER_TAGS } from '../../constants/customers'
 import type { CustomerPermissions } from '../../constants/customers'
-import { BRANCHES } from '../../constants/orders'
+import useBranchNames from '../../hooks/useBranchNames'
 import type { CrmCustomer, CustomerStatus } from '../../types/customer'
 import { formatLastOrder } from '../../utils/customers'
 import type { CustomerSortKey } from '../../utils/customers'
@@ -27,15 +27,13 @@ import { formatXaf } from '../../utils/orders'
 import { iconButton } from '../orders/styles'
 import Menu, { MenuItem } from '../ui/Menu'
 import { Avatar, CustomerStatusBadge, TierBadge } from './CustomerBits'
+import { telHref, whatsappHref } from '../../utils/contact'
 
 export type CustomerSort = { key: CustomerSortKey; direction: 'asc' | 'desc' }
 
 const cellClass = 'px-2 py-3 align-top'
 const headClass =
   'sticky top-0 z-10 bg-white px-2 py-2.5 text-left text-[9px] font-bold tracking-wider whitespace-nowrap text-muted uppercase shadow-[inset_0_-1px_0_var(--color-line)]'
-
-const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, '')}`
-const whatsappHref = (phone: string) => `https://wa.me/${phone.replace(/\D/g, '')}`
 
 function SortHeader({
   label,
@@ -300,8 +298,8 @@ function CustomersTable({
                                   onArchive(customer.id)
                                 }}
                               >
-                                <Archive className="size-4" aria-hidden="true" />
-                                Archive Customer
+                                <Trash2 className="size-4" aria-hidden="true" />
+                                Delete Customer
                               </MenuItem>
                             )}
                           </>
@@ -407,6 +405,7 @@ export function CustomerBulkBar({
   onAddTag,
   onArchive,
 }: CustomerBulkBarProps) {
+  const branchNames = useBranchNames()
   return (
     <div
       role="region"
@@ -465,17 +464,27 @@ export function CustomerBulkBar({
             triggerClassName={bulkActionClass}
           >
             {(close) =>
-              BRANCHES.map((branch) => (
-                <MenuItem
-                  key={branch}
-                  onSelect={() => {
-                    close()
-                    onAssignBranch(branch)
-                  }}
-                >
-                  {branch}
+              branchNames.names.length === 0 ? (
+                <MenuItem disabled onSelect={close}>
+                  {branchNames.isLoading
+                    ? 'Loading branches…'
+                    : branchNames.isError
+                      ? 'Couldn’t load the branches'
+                      : 'No branches'}
                 </MenuItem>
-              ))
+              ) : (
+                branchNames.names.map((branch) => (
+                  <MenuItem
+                    key={branch}
+                    onSelect={() => {
+                      close()
+                      onAssignBranch(branch)
+                    }}
+                  >
+                    {branch}
+                  </MenuItem>
+                ))
+              )
             }
           </Menu>
           <Menu
@@ -510,8 +519,8 @@ export function CustomerBulkBar({
             onClick={onArchive}
             className={`${bulkActionClass} bg-danger/80 hover:bg-danger`}
           >
-            <Archive className="size-3.5" aria-hidden="true" />
-            Archive
+            <Trash2 className="size-3.5" aria-hidden="true" />
+            Delete
           </button>
         </>
       )}

@@ -6,7 +6,10 @@ import {
   SKILL_LEVELS,
   STAFF_STATUSES,
 } from '../constants/staff'
+import { USER_TYPES } from '../constants/users'
 import type { StaffFilters, StaffMember, StaffStatus } from '../types/staff'
+import type { AppUser, UserType } from '../types/user'
+import { toCsv } from './csv'
 
 const DAY_MS = 86_400_000
 
@@ -196,10 +199,72 @@ export function staffToCsv(staff: StaffMember[], includePerformance: boolean) {
     ['Attendance %', (member) => member.attendanceRate],
   ]
   if (includePerformance) columns.push(['Performance %', (member) => member.score])
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...staff.map((member) => columns.map(([, read]) => escape(read(member))).join(',')),
-  ].join('\r\n')
+  return toCsv(columns, staff)
+}
+
+// The department the Staff page groups each backend user type under
+const TYPE_DEPARTMENTS: Partial<Record<UserType, string>> = {
+  WASHER: 'Laundry Operations',
+  DRY_CLEANER: 'Laundry Operations',
+  STAFF_MEMBER: 'Laundry Operations',
+  FRONT_DESK: 'Front Desk',
+  DELIVERY_AGENT: 'Delivery',
+  MANAGER: 'Management',
+  STORE_MANAGER: 'Management',
+  OWNER: 'Management',
+  TENANT: 'Management',
+  SYSTEM_ADMIN: 'Management',
+}
+
+// A user from the users API as a staff record. The API has no shifts,
+// attendance, tasks, scores, skills, pay or leave yet, so those start empty
+// with the same defaults as a new hire (no absences, nothing assigned).
+export function memberFromUser(user: AppUser): StaffMember {
+  const typeLabel = user.userType ? USER_TYPES[user.userType] : ''
+  return {
+    id: user.uuid,
+    username: user.username,
+    name: `${user.firstName} ${user.lastName}`.trim() || user.username,
+    jobTitle: user.role || typeLabel || 'Staff',
+    department: (user.userType && TYPE_DEPARTMENTS[user.userType]) || 'Laundry Operations',
+    branch: user.branch || 'No branch',
+    phone: user.phone,
+    email: user.email,
+    employment: 'Not recorded',
+    hiredAt: user.createdAt,
+    manager: user.createdBy || 'Not recorded',
+    // The server role; the permission preview only knows the local templates
+    template: user.role || typeLabel,
+    status: user.active ? 'offline' : 'suspended',
+    shiftStart: '',
+    shiftEnd: '',
+    workingDays: '',
+    clockIn: '',
+    breakMinutes: 0,
+    assignment: '',
+    assignmentRef: '',
+    tasksAssigned: 0,
+    tasksDone: 0,
+    tasksOverdue: 0,
+    capacity: 12,
+    attendanceRate: 100,
+    lateThisMonth: 0,
+    score: 0,
+    onTime: 0,
+    quality: 0,
+    rating: 0,
+    skills: [],
+    certification: null,
+    trainingDone: 0,
+    trainingTotal: 10,
+    emergencyContact: 'Not provided',
+    monthlySalary: 0,
+    leaveBalance: 0,
+    twoFactor: false,
+    loginAccess: user.active,
+    lastLoginAt: user.lastLoginTime,
+    activity: user.createdAt
+      ? [{ at: user.createdAt, text: user.createdBy ? `Account created by ${user.createdBy}` : 'Account created' }]
+      : [],
+  }
 }

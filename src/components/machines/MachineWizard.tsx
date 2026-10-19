@@ -1,24 +1,12 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, TriangleAlert } from 'lucide-react'
 import { MACHINE_TYPES, MACHINE_WIZARD_STEPS } from '../../constants/machines'
 import type { MachineProfile, MachineSpecs, MachineType } from '../../types/machine'
 import { getMachineType, getProfileProblems, nextMachineId } from '../../utils/machines'
 import { formatXaf } from '../../utils/orders'
-import { fieldClass, labelClass, primaryButton, secondaryButton } from '../orders/styles'
+import { fieldClass, primaryButton, secondaryButton } from '../orders/styles'
 import Modal from '../ui/Modal'
-
-function Field({ label, htmlFor, wide = false, hint, children }: { label: string; htmlFor: string; wide?: boolean; hint?: string; children: ReactNode }) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-      {hint && <p className="mt-1 text-[11px] text-muted">{hint}</p>}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 type TextKey = 'name' | 'id' | 'manufacturer' | 'model' | 'serial' | 'description' | 'area' | 'zone'
 
@@ -56,7 +44,7 @@ function MachineWizard({
   const typeMeta = getMachineType(draft.type)
 
   const text = (id: string, label: string, key: TextKey, options: { placeholder?: string; wide?: boolean; disabled?: boolean; hint?: string } = {}) => (
-    <Field label={label} htmlFor={id} wide={options.wide} hint={options.hint}>
+    <FormField label={label} htmlFor={id} wide={options.wide} hint={options.hint}>
       <input
         id={id}
         autoComplete="off"
@@ -69,7 +57,7 @@ function MachineWizard({
         }}
         className={`${fieldClass} disabled:opacity-60`}
       />
-    </Field>
+    </FormField>
   )
 
   function chooseType(type: MachineType) {
@@ -144,38 +132,38 @@ function MachineWizard({
       {step === 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {text('machine-name', 'Machine name', 'name', { placeholder: 'e.g. Washer #15' })}
-          <Field label="Machine type" htmlFor="machine-type">
+          <FormField label="Machine type" htmlFor="machine-type">
             <select id="machine-type" value={draft.type} onChange={(event) => chooseType(event.target.value as MachineType)} className={fieldClass}>
               {MACHINE_TYPES.map(({ value }) => (
                 <option key={value}>{value}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           {text('machine-id', 'Machine ID', 'id', { disabled: mode === 'edit', hint: mode === 'create' ? 'Suggested from the type; change it if you label machines differently.' : undefined })}
           {text('machine-serial', 'Serial number', 'serial', { placeholder: 'SN-9283847' })}
           {text('machine-maker', 'Manufacturer', 'manufacturer')}
           {text('machine-model', 'Model', 'model')}
-          <Field label="Year purchased" htmlFor="machine-year">
+          <FormField label="Year purchased" htmlFor="machine-year">
             <input id="machine-year" type="number" min={1990} max={2100} value={draft.yearPurchased} onChange={(event) => patch({ yearPurchased: Number(event.target.value) })} className={fieldClass} />
-          </Field>
-          <Field label="Purchase cost (XAF)" htmlFor="machine-cost">
+          </FormField>
+          <FormField label="Purchase cost (XAF)" htmlFor="machine-cost">
             <input id="machine-cost" type="number" min={0} step={50_000} value={draft.purchaseCost} onChange={(event) => patch({ purchaseCost: Math.max(0, Number(event.target.value)) })} className={fieldClass} />
-          </Field>
-          <Field label="Description" htmlFor="machine-description" wide>
+          </FormField>
+          <FormField label="Description" htmlFor="machine-description" wide>
             <textarea id="machine-description" rows={2} value={draft.description} onChange={(event) => patch({ description: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-          </Field>
+          </FormField>
         </div>
       )}
 
       {step === 1 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Branch" htmlFor="machine-branch" hint={mode === 'edit' ? 'Use Transfer Machine to move it to another branch, so the move is recorded.' : undefined}>
+          <FormField label="Branch" htmlFor="machine-branch" hint={mode === 'edit' ? 'Use Transfer Machine to move it to another branch, so the move is recorded.' : undefined}>
             <select id="machine-branch" disabled={mode === 'edit'} value={draft.branchId} onChange={(event) => patch({ branchId: event.target.value })} className={`${fieldClass} disabled:opacity-60`}>
               {branches.map(({ id, name }) => (
                 <option key={id} value={id}>{name}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           {text('machine-area', 'Department / area', 'area', { placeholder: 'e.g. Washing Area' })}
           {text('machine-zone', 'Zone and position', 'zone', { placeholder: 'e.g. Zone A / Station 03', wide: true })}
         </div>
@@ -184,7 +172,7 @@ function MachineWizard({
       {step === 2 && (
         <div className="grid gap-3 sm:grid-cols-3">
           {SPEC_FIELDS.map(([key, label, unit]) => (
-            <Field key={key} label={`${label} (${unit})`} htmlFor={`spec-${key}`}>
+            <FormField key={key} label={`${label} (${unit})`} htmlFor={`spec-${key}`}>
               <input
                 id={`spec-${key}`}
                 type="number"
@@ -193,14 +181,14 @@ function MachineWizard({
                 onChange={(event) => patch({ specs: { ...draft.specs, [key]: Math.max(0, Number(event.target.value)) } })}
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           ))}
-          <Field label="Warranty ends" htmlFor="spec-warranty">
+          <FormField label="Warranty ends" htmlFor="spec-warranty">
             <input id="spec-warranty" type="date" value={draft.specs.warrantyEnd} onChange={(event) => patch({ specs: { ...draft.specs, warrantyEnd: event.target.value } })} className={fieldClass} />
-          </Field>
-          <Field label="Preventive maintenance every (days)" htmlFor="spec-frequency">
+          </FormField>
+          <FormField label="Preventive maintenance every (days)" htmlFor="spec-frequency">
             <input id="spec-frequency" type="number" min={1} value={draft.maintenanceEveryDays} onChange={(event) => patch({ maintenanceEveryDays: Math.max(1, Number(event.target.value)) })} className={fieldClass} />
-          </Field>
+          </FormField>
         </div>
       )}
 

@@ -43,6 +43,7 @@ import {
 } from '../../utils/payments'
 import { fieldClass, primaryButton, secondaryButton } from '../orders/styles'
 import Badge from '../ui/Badge'
+import { PanelEmpty } from '../ui/Panel'
 
 const smallButton = `${secondaryButton} h-7 px-2.5 text-[11px]`
 const thClass = 'py-1.5 pr-3 text-left text-[9px] font-bold tracking-wider whitespace-nowrap text-muted uppercase'
@@ -79,14 +80,6 @@ export function Panel({
       </header>
       <div className="mt-3">{children}</div>
     </section>
-  )
-}
-
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-lg bg-field px-3 py-6 text-center text-xs text-muted">
-      {children}
-    </p>
   )
 }
 
@@ -566,7 +559,7 @@ export function ExceptionsPanel({
       badge={open.length > 0 && <Badge tone="danger">{open.length} open</Badge>}
     >
       {open.length === 0 ? (
-        <Empty>No open payment exceptions.</Empty>
+        <PanelEmpty>No open payment exceptions.</PanelEmpty>
       ) : (
         <ul className="space-y-2">
           {open.map((exception) => (
@@ -631,7 +624,7 @@ export function RefundsPanel({
   return (
     <Panel title="Refunds" icon={RotateCcw}>
       {refunds.length === 0 ? (
-        <Empty>No refunds today.</Empty>
+        <PanelEmpty>No refunds today.</PanelEmpty>
       ) : (
         <div className="relative overflow-x-auto">
           <table className="w-full min-w-[720px] text-xs">

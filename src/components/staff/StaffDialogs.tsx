@@ -1,7 +1,5 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, TriangleAlert } from 'lucide-react'
-import { BRANCHES } from '../../constants/orders'
 import {
   DEPARTMENTS,
   EMPLOYMENT_TYPES,
@@ -17,38 +15,18 @@ import type {
   SkillLevel,
   StaffMember,
 } from '../../types/staff'
+import { USER_TYPES } from '../../constants/users'
+import { useGetBranchDropdownQuery } from '../../services/branchApi'
+import { useGetRoleDropdownQuery } from '../../services/userApi'
+import type { UserType } from '../../types/user'
 import { recommendStaff } from '../../utils/staff'
-import {
-  fieldClass,
-  labelClass,
-  primaryButton,
-  secondaryButton,
-  sectionTitle,
-} from '../orders/styles'
+import { USERNAME_PATTERN } from '../../utils/tenants'
+import { fieldClass, primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Badge from '../ui/Badge'
+import FormAlert from '../ui/FormAlert'
 import Modal from '../ui/Modal'
 import { StaffAvatar, StaffStatusBadge } from './StaffBits'
-
-function Field({
-  label,
-  htmlFor,
-  wide = false,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  wide?: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 const pickClass =
   'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-xs transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none'
@@ -100,7 +78,7 @@ export function AssignWorkDialog({
     >
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Type of work" htmlFor="assign-task">
+          <FormField label="Type of work" htmlFor="assign-task">
             <select
               id="assign-task"
               value={task.label}
@@ -113,8 +91,8 @@ export function AssignWorkDialog({
                 <option key={label}>{label}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Order or job reference (optional)" htmlFor="assign-reference">
+          </FormField>
+          <FormField label="Order or job reference (optional)" htmlFor="assign-reference">
             <input
               id="assign-reference"
               placeholder="e.g. ORD-10521"
@@ -122,7 +100,7 @@ export function AssignWorkDialog({
               onChange={(event) => setReference(event.target.value)}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         </div>
 
         <fieldset>
@@ -221,7 +199,7 @@ export function AttendanceDialog({
       }
     >
       <div className="space-y-3">
-        <Field label="Staff member" htmlFor="attendance-staff">
+        <FormField label="Staff member" htmlFor="attendance-staff">
           <select
             id="attendance-staff"
             value={staffId}
@@ -235,7 +213,7 @@ export function AttendanceDialog({
               </option>
             ))}
           </select>
-        </Field>
+        </FormField>
         {member && (
           <p className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
             <StaffStatusBadge status={member.status} />
@@ -245,7 +223,7 @@ export function AttendanceDialog({
             {member.clockIn && ` · clocked in ${member.clockIn}`}
           </p>
         )}
-        <Field label="Action" htmlFor="attendance-action">
+        <FormField label="Action" htmlFor="attendance-action">
           <select
             id="attendance-action"
             value={action}
@@ -256,9 +234,9 @@ export function AttendanceDialog({
               <option key={option}>{option}</option>
             ))}
           </select>
-        </Field>
+        </FormField>
         {action !== 'Mark absent' && (
-          <Field label="Time" htmlFor="attendance-time">
+          <FormField label="Time" htmlFor="attendance-time">
             <input
               id="attendance-time"
               type="time"
@@ -266,7 +244,7 @@ export function AttendanceDialog({
               onChange={(event) => setTime(event.target.value)}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         )}
       </div>
     </Modal>
@@ -430,7 +408,7 @@ export function LeaveDialog({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Staff member" htmlFor="leave-staff">
+        <FormField label="Staff member" htmlFor="leave-staff">
           <select
             id="leave-staff"
             value={staffId}
@@ -444,8 +422,8 @@ export function LeaveDialog({
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="Leave type" htmlFor="leave-type">
+        </FormField>
+        <FormField label="Leave type" htmlFor="leave-type">
           <select
             id="leave-type"
             value={type}
@@ -456,8 +434,8 @@ export function LeaveDialog({
               <option key={option}>{option}</option>
             ))}
           </select>
-        </Field>
-        <Field label="Start date" htmlFor="leave-from">
+        </FormField>
+        <FormField label="Start date" htmlFor="leave-from">
           <input
             id="leave-from"
             type="date"
@@ -465,8 +443,8 @@ export function LeaveDialog({
             onChange={(event) => setFrom(event.target.value)}
             className={fieldClass}
           />
-        </Field>
-        <Field label="End date" htmlFor="leave-to">
+        </FormField>
+        <FormField label="End date" htmlFor="leave-to">
           <input
             id="leave-to"
             type="date"
@@ -474,15 +452,15 @@ export function LeaveDialog({
             onChange={(event) => setTo(event.target.value)}
             className={fieldClass}
           />
-        </Field>
-        <Field label="Reason" htmlFor="leave-reason" wide>
+        </FormField>
+        <FormField label="Reason" htmlFor="leave-reason" wide>
           <input
             id="leave-reason"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             className={fieldClass}
           />
-        </Field>
+        </FormField>
       </div>
     </Modal>
   )
@@ -492,11 +470,36 @@ export function LeaveDialog({
 
 const WIZARD_STEPS = ['Personal', 'Employment', 'Role & Access', 'Schedule', 'Skills', 'Review']
 
+// The user types a staff account can have
+const STAFF_USER_TYPES: UserType[] = [
+  'STAFF_MEMBER',
+  'WASHER',
+  'DRY_CLEANER',
+  'FRONT_DESK',
+  'DELIVERY_AGENT',
+  'STORE_MANAGER',
+  'MANAGER',
+]
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+// Account fields go to POST /users; the rest (job title, department,
+// employment, schedule, skills…) is kept for this session only until the
+// backend stores it
 export type NewStaffInput = {
+  username: string
   firstName: string
   lastName: string
   phone: string
+  // Required: the backend emails the generated password here
   email: string
+  city: string
+  neighborhood: string
+  userType: UserType
+  // Branch uuid ('' = none) and its name for display
+  branchUuid: string
+  // Role id from GET /role/dropdown; null = none
+  roleId: number | null
   emergencyContact: string
   jobTitle: string
   department: string
@@ -512,24 +515,37 @@ export type NewStaffInput = {
 }
 
 export function StaffWizard({
+  saving = false,
+  error,
   onClose,
   onCreate,
 }: {
+  saving?: boolean
+  // Server error from the last attempt, shown above the steps
+  error?: string | null
   onClose: () => void
   onCreate: (input: NewStaffInput) => void
 }) {
   const [step, setStep] = useState(0)
+  const branches = useGetBranchDropdownQuery()
+  const roles = useGetRoleDropdownQuery()
   const [draft, setDraft] = useState<NewStaffInput>({
+    username: '',
     firstName: '',
     lastName: '',
     phone: '',
     email: '',
+    city: '',
+    neighborhood: '',
+    userType: 'STAFF_MEMBER',
+    branchUuid: '',
+    roleId: null,
     emergencyContact: '',
     jobTitle: '',
     department: DEPARTMENTS[0],
-    branch: BRANCHES[0],
+    branch: 'No branch',
     employment: EMPLOYMENT_TYPES[0],
-    template: 'Laundry Operator',
+    template: '',
     loginAccess: true,
     twoFactor: false,
     shiftStart: '08:00',
@@ -541,8 +557,12 @@ export function StaffWizard({
   const granted = ROLE_TEMPLATES[draft.template] ?? {}
 
   const problems = [
+    !USERNAME_PATTERN.test(draft.username.trim().toLowerCase()) &&
+      'Username needs 3–30 characters: letters, numbers, dots, dashes or underscores (Personal).',
     !draft.firstName.trim() && 'First name is required (Personal).',
     !draft.phone.trim() && 'Phone is required (Personal).',
+    !EMAIL_PATTERN.test(draft.email.trim()) &&
+      'A valid email is required: the sign-in details are sent there (Personal).',
     !draft.jobTitle.trim() && 'Job title is required (Employment).',
     draft.shiftStart >= draft.shiftEnd && 'Shift end must be after shift start (Schedule).',
   ].filter((problem): problem is string => Boolean(problem))
@@ -550,10 +570,20 @@ export function StaffWizard({
   const text = (
     id: string,
     label: string,
-    key: 'firstName' | 'lastName' | 'phone' | 'email' | 'emergencyContact' | 'jobTitle' | 'workingDays',
+    key:
+      | 'username'
+      | 'firstName'
+      | 'lastName'
+      | 'phone'
+      | 'email'
+      | 'city'
+      | 'neighborhood'
+      | 'emergencyContact'
+      | 'jobTitle'
+      | 'workingDays',
     options: { type?: string; wide?: boolean; placeholder?: string } = {},
   ) => (
-    <Field label={label} htmlFor={id} wide={options.wide}>
+    <FormField label={label} htmlFor={id} wide={options.wide}>
       <input
         id={id}
         type={options.type ?? 'text'}
@@ -563,15 +593,15 @@ export function StaffWizard({
         onChange={(event) => patch({ [key]: event.target.value })}
         className={fieldClass}
       />
-    </Field>
+    </FormField>
   )
   const choice = (
     id: string,
     label: string,
-    key: 'department' | 'branch' | 'employment' | 'template',
+    key: 'department' | 'employment',
     options: string[],
   ) => (
-    <Field label={label} htmlFor={id}>
+    <FormField label={label} htmlFor={id}>
       <select
         id={id}
         value={draft[key]}
@@ -582,7 +612,7 @@ export function StaffWizard({
           <option key={option}>{option}</option>
         ))}
       </select>
-    </Field>
+    </FormField>
   )
 
   function setSkill(name: string, level: SkillLevel | '') {
@@ -617,17 +647,22 @@ export function StaffWizard({
           ) : (
             <button
               type="button"
-              disabled={problems.length > 0}
+              disabled={problems.length > 0 || saving}
               onClick={() => onCreate(draft)}
               className={primaryButton}
             >
               <Check className="size-4" aria-hidden="true" />
-              Create Staff
+              {saving ? 'Creating…' : 'Create Staff'}
             </button>
           )}
         </>
       }
     >
+      {error && (
+        <div className="mb-4">
+          <FormAlert>{error}</FormAlert>
+        </div>
+      )}
       <ol className="mb-5 flex gap-1 overflow-x-auto" aria-label="Wizard steps">
         {WIZARD_STEPS.map((label, index) => (
           <li key={label} className="min-w-16 flex-1">
@@ -652,8 +687,11 @@ export function StaffWizard({
         <div className="grid gap-3 sm:grid-cols-2">
           {text('staff-first', 'First name', 'firstName')}
           {text('staff-last', 'Last name', 'lastName')}
+          {text('staff-username', 'Username', 'username', { placeholder: 'e.g. jdoe' })}
           {text('staff-phone', 'Phone', 'phone', { type: 'tel', placeholder: '+237 6XX XXX XXX' })}
-          {text('staff-email', 'Email (optional)', 'email', { type: 'email' })}
+          {text('staff-email', 'Email (sign-in details are sent here)', 'email', { type: 'email', wide: true })}
+          {text('staff-city', 'City', 'city')}
+          {text('staff-neighborhood', 'Neighborhood', 'neighborhood')}
           {text('staff-emergency', 'Emergency contact (name, relationship, phone)', 'emergencyContact', { wide: true })}
         </div>
       )}
@@ -662,10 +700,46 @@ export function StaffWizard({
         <div className="grid gap-3 sm:grid-cols-2">
           {text('staff-title', 'Job title', 'jobTitle', { placeholder: 'e.g. Wash Operator' })}
           {choice('staff-department', 'Department', 'department', DEPARTMENTS)}
-          {choice('staff-branch', 'Branch', 'branch', BRANCHES)}
+          <FormField label="User type" htmlFor="staff-user-type">
+            <select
+              id="staff-user-type"
+              value={draft.userType}
+              onChange={(event) => patch({ userType: event.target.value as UserType })}
+              className={fieldClass}
+            >
+              {STAFF_USER_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {USER_TYPES[type]}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField
+            label="Branch"
+            htmlFor="staff-branch"
+            hint={branches.isError ? 'Couldn’t load the branches.' : undefined}
+          >
+            <select
+              id="staff-branch"
+              value={draft.branchUuid}
+              onChange={(event) => {
+                const branch = branches.data?.find(({ uuid }) => uuid === event.target.value)
+                patch({ branchUuid: event.target.value, branch: branch?.name ?? 'No branch' })
+              }}
+              className={fieldClass}
+            >
+              <option value="">{branches.isLoading ? 'Loading branches…' : 'No branch'}</option>
+              {branches.data?.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </FormField>
           {choice('staff-employment', 'Employment type', 'employment', EMPLOYMENT_TYPES)}
           <p className="text-[11px] text-muted sm:col-span-2">
-            The employee ID is generated when the profile is created.
+            Job title, department and employment type are kept for this session only until the
+            server stores them.
           </p>
         </div>
       )}
@@ -673,9 +747,35 @@ export function StaffWizard({
       {step === 2 && (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            {choice('staff-template', 'System role', 'template', Object.keys(ROLE_TEMPLATES))}
+            <FormField
+              label="Role"
+              htmlFor="staff-role"
+              hint={roles.isError ? 'Couldn’t load the roles.' : undefined}
+            >
+              <select
+                id="staff-role"
+                value={draft.roleId ?? ''}
+                onChange={(event) => {
+                  const role = roles.data?.find(({ id }) => String(id) === event.target.value)
+                  patch({ roleId: role?.id ?? null, template: role?.name ?? '' })
+                }}
+                className={fieldClass}
+              >
+                <option value="">{roles.isLoading ? 'Loading roles…' : 'No role'}</option>
+                {roles.data?.map(({ id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
           </div>
-          <ul className="space-y-1 rounded-lg bg-field p-3 text-xs">
+          {!ROLE_TEMPLATES[draft.template] && (
+            <p className="text-[11px] text-muted">
+              Permissions come from the role on the server and aren’t previewed here yet.
+            </p>
+          )}
+          <ul className={`space-y-1 rounded-lg bg-field p-3 text-xs ${ROLE_TEMPLATES[draft.template] ? '' : 'hidden'}`}>
             {Object.keys(PERMISSION_MODULES).map((module) => (
               <li key={module} className="flex justify-between gap-3">
                 <span className="font-semibold text-ink">{module}</span>
@@ -688,7 +788,7 @@ export function StaffWizard({
           <div className="grid gap-2 sm:grid-cols-2">
             {(
               [
-                ['loginAccess', 'Allow login (invitation sent on creation)'],
+                ['loginAccess', 'Allow login (password emailed on creation)'],
                 ['twoFactor', 'Require two-factor authentication'],
               ] as ['loginAccess' | 'twoFactor', string][]
             ).map(([key, label]) => (
@@ -711,7 +811,10 @@ export function StaffWizard({
 
       {step === 3 && (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Shift start" htmlFor="staff-start">
+          <p className="text-[11px] text-muted sm:col-span-3">
+            The schedule is kept for this session only until the server stores it.
+          </p>
+          <FormField label="Shift start" htmlFor="staff-start">
             <input
               id="staff-start"
               type="time"
@@ -719,8 +822,8 @@ export function StaffWizard({
               onChange={(event) => patch({ shiftStart: event.target.value })}
               className={fieldClass}
             />
-          </Field>
-          <Field label="Shift end" htmlFor="staff-end">
+          </FormField>
+          <FormField label="Shift end" htmlFor="staff-end">
             <input
               id="staff-end"
               type="time"
@@ -728,7 +831,7 @@ export function StaffWizard({
               onChange={(event) => patch({ shiftEnd: event.target.value })}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
           {text('staff-days', 'Working days', 'workingDays')}
         </div>
       )}
@@ -762,12 +865,16 @@ export function StaffWizard({
             {(
               [
                 ['Name', `${draft.firstName} ${draft.lastName}`.trim() || '—'],
+                ['Username', draft.username || '—'],
+                ['Email', draft.email || '—'],
                 ['Phone', draft.phone || '—'],
+                ['Location', [draft.neighborhood, draft.city].filter(Boolean).join(', ') || '—'],
+                ['User type', USER_TYPES[draft.userType]],
                 ['Job title', draft.jobTitle || '—'],
                 ['Department', draft.department],
                 ['Branch', draft.branch],
                 ['Employment', draft.employment],
-                ['System role', draft.template],
+                ['Role', draft.template || 'None'],
                 ['Shift', `${draft.shiftStart}–${draft.shiftEnd}, ${draft.workingDays}`],
                 ['Skills', draft.skills.map(({ name, level }) => `${name} (${level})`).join(', ') || 'None'],
                 ['Login', draft.loginAccess ? `Enabled${draft.twoFactor ? ', 2FA required' : ''}` : 'Disabled'],

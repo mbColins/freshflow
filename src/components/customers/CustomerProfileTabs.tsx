@@ -25,7 +25,7 @@ import {
 } from '../../constants/customers'
 import type { CustomerPermissions } from '../../constants/customers'
 import { MESSAGE_TEMPLATES } from '../../constants/orders'
-import { getSampleOrders } from '../../constants/sampleCustomers'
+import { getSampleOrders } from '../../constants/sampleOrders'
 import type { Address, Consent, CrmCustomer } from '../../types/customer'
 import type { FulfilmentMethod } from '../../types/order'
 import {
@@ -43,6 +43,7 @@ import {
   getPrimaryService,
   getTotal,
 } from '../../utils/orders'
+import { whatsappHref } from '../../utils/contact'
 import { PaymentBadge, StatusBadge } from '../orders/OrderBadges'
 import {
   fieldClass,
@@ -54,6 +55,8 @@ import {
 import Badge from '../ui/Badge'
 import CustomerActivityChart from './CustomerActivityChart'
 import { HealthBadge, TierBadge } from './CustomerBits'
+import { PanelEmpty } from '../ui/Panel'
+import { DetailGrid } from '../ui/Details'
 
 type Change = (change: (customer: CrmCustomer) => CrmCustomer) => void
 
@@ -88,27 +91,6 @@ function Panel({
       </header>
       <div className="mt-3">{children}</div>
     </section>
-  )
-}
-
-function EmptyNote({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-lg bg-field px-3 py-6 text-center text-xs text-muted">
-      {children}
-    </p>
-  )
-}
-
-function Facts({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
   )
 }
 
@@ -262,7 +244,7 @@ export function OverviewTab({
           }
         >
           {getSampleOrders(customer.phone).length === 0 ? (
-            <EmptyNote>No recent orders to show.</EmptyNote>
+            <PanelEmpty>No recent orders to show.</PanelEmpty>
           ) : (
             <RecentOrders
               customer={customer}
@@ -283,7 +265,7 @@ export function OverviewTab({
               </Badge>
             }
           >
-            <Facts
+            <DetailGrid
               rows={[
                 ['Company name', customer.name],
                 ['Contact person', customer.corporate.contact],
@@ -331,7 +313,7 @@ export function OverviewTab({
               Total revenue over the relationship
             </p>
             <div className="mt-3">
-              <Facts
+              <DetailGrid
                 rows={[
                   ['Number of orders', customer.orders],
                   ['Average order value', formatXaf(getAverageOrder(customer))],
@@ -352,7 +334,7 @@ export function OverviewTab({
         )}
 
         <Panel title="Laundry preferences">
-          <Facts
+          <DetailGrid
             rows={[
               ['Detergent', customer.laundry.detergent],
               ['Fabric softener', customer.laundry.softener],
@@ -390,7 +372,7 @@ export function OverviewTab({
           }
         >
           {customer.notes.length === 0 ? (
-            <EmptyNote>No notes yet.</EmptyNote>
+            <PanelEmpty>No notes yet.</PanelEmpty>
           ) : (
             <ul className="space-y-2">
               {customer.notes.map((note) => (
@@ -476,7 +458,7 @@ export function PaymentsTab({ customer, now, onRecordPayment }: TabProps) {
     <div className="min-w-0 space-y-4">
       <OutstandingBanner customer={customer} onRecordPayment={onRecordPayment} />
       <Panel title="Spending">
-        <Facts
+        <DetailGrid
           rows={[
             ['Total spent', formatXaf(customer.spent)],
             ['Average order value', formatXaf(getAverageOrder(customer))],
@@ -487,7 +469,7 @@ export function PaymentsTab({ customer, now, onRecordPayment }: TabProps) {
       </Panel>
       <Panel title="Payment history">
         {customer.payments.length === 0 ? (
-          <EmptyNote>No payments recorded yet.</EmptyNote>
+          <PanelEmpty>No payments recorded yet.</PanelEmpty>
         ) : (
           <div className="relative overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-xs">
@@ -552,7 +534,7 @@ export function AddressesTab({
       }
     >
       {customer.addresses.length === 0 ? (
-        <EmptyNote>No addresses saved yet.</EmptyNote>
+        <PanelEmpty>No addresses saved yet.</PanelEmpty>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
           {customer.addresses.map((address) => (
@@ -918,7 +900,7 @@ export function LoyaltyTab({
 
         <Panel title="Loyalty history">
           {history.length === 0 ? (
-            <EmptyNote>No loyalty activity yet.</EmptyNote>
+            <PanelEmpty>No loyalty activity yet.</PanelEmpty>
           ) : (
             <ul className="space-y-2 text-xs">
               {history.map((entry, index) => (
@@ -984,7 +966,7 @@ export function CommunicationTab({ customer }: TabProps) {
             SMS
           </a>
           <a
-            href={`https://wa.me/${phone.replace('+', '')}?text=${message}`}
+            href={whatsappHref(phone, template)}
             target="_blank"
             rel="noreferrer"
             className={linkButton}
@@ -1007,7 +989,7 @@ export function CommunicationTab({ customer }: TabProps) {
 
       <Panel title="Communication history">
         {customer.communications.length === 0 ? (
-          <EmptyNote>No messages sent yet.</EmptyNote>
+          <PanelEmpty>No messages sent yet.</PanelEmpty>
         ) : (
           <ul className="space-y-2">
             {customer.communications.map((entry, index) => (

@@ -23,6 +23,7 @@ import type {
   UtilizationLevel,
   UtilizationRange,
 } from '../types/machine'
+import { csvCell } from './csv'
 import { formatXaf } from './orders'
 import { dayNumber, toDateKey } from './promotions'
 import { formatCompactXaf } from './services'
@@ -422,11 +423,6 @@ export function getCostSummary(machine: Machine) {
 }
 
 // ---------- Export and comparison ----------
-
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-}
 
 export function machinesToCsv(machines: Machine[], branchName: (id: string) => string, now: number) {
   const header = ['ID', 'Name', 'Type', 'Manufacturer', 'Model', 'Serial', 'Branch', 'Area', 'Status', 'Current order', 'Utilization %', 'Runtime today (min)', 'Cycles today', 'Total cycles', 'Next maintenance', 'Maintenance status', 'Open fault']

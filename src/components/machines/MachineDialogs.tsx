@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { ArrowDown, ArrowUp, TriangleAlert } from 'lucide-react'
 import {
   FAULT_TYPES,
@@ -14,7 +14,7 @@ import type { MachinePermissions } from '../../constants/machines'
 import { CURRENT_USER } from '../../constants/orders'
 import useMachines, { machineStore } from '../../hooks/useMachines'
 import useNow from '../../hooks/useNow'
-import type { FaultSeverity, Machine, MachineProfile } from '../../types/machine'
+import type { Machine, MachineProfile } from '../../types/machine'
 import {
   COMPARE_MACHINE_METRICS,
   assignJob,
@@ -43,17 +43,7 @@ import Modal from '../ui/Modal'
 import { MachineStatusBadge } from './MachineBits'
 import MachineWizard from './MachineWizard'
 import type { MachineDialogName } from './MachinesListParts'
-
-function Field({ label, htmlFor, wide = false, children }: { label: string; htmlFor: string; wide?: boolean; children: ReactNode }) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 function Options({ items }: { items: readonly string[] }) {
   return (
@@ -68,9 +58,11 @@ function Options({ items }: { items: readonly string[] }) {
 // ---------- Report fault ----------
 
 function FaultDialog({ machine, onClose, onSubmit }: { machine: Machine; onClose: () => void; onSubmit: (input: FaultInput) => void }) {
-  const [input, setInput] = useState<FaultInput>({ type: FAULT_TYPES[0], severity: 'Medium', description: '', technician: '', downtimeMin: 60 })
-  const patch = (change: Partial<FaultInput>) => setInput({ ...input, ...change })
-  const stops = input.severity === 'Critical' || input.severity === 'High'
+  const { register, handleSubmit, control } = useForm<FaultInput>({
+    defaultValues: { type: FAULT_TYPES[0], severity: 'Medium', description: '', technician: '', downtimeMin: 60 },
+  })
+  const [severity, description] = useWatch({ control, name: ['severity', 'description'] })
+  const stops = severity === 'Critical' || severity === 'High'
   return (
     <Modal
       open
@@ -82,7 +74,7 @@ function FaultDialog({ machine, onClose, onSubmit }: { machine: Machine; onClose
           <button type="button" onClick={onClose} className={secondaryButton}>
             Cancel
           </button>
-          <button type="submit" form="fault-form" disabled={!input.description.trim()} className={dangerButton}>
+          <button type="submit" form="fault-form" disabled={!description.trim()} className={dangerButton}>
             Report Fault
           </button>
         </>
@@ -91,45 +83,42 @@ function FaultDialog({ machine, onClose, onSubmit }: { machine: Machine; onClose
       <form
         id="fault-form"
         className="grid gap-3 sm:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit({ ...input, description: input.description.trim() })
-        }}
+        onSubmit={handleSubmit((input) => onSubmit({ ...input, description: input.description.trim() }))}
       >
-        <Field label="Fault type" htmlFor="fault-type">
-          <select id="fault-type" value={input.type} onChange={(event) => patch({ type: event.target.value })} className={fieldClass}>
+        <FormField label="Fault type" htmlFor="fault-type">
+          <select id="fault-type" {...register('type')} className={fieldClass}>
             <Options items={FAULT_TYPES} />
           </select>
-        </Field>
-        <Field label="Severity" htmlFor="fault-severity">
-          <select id="fault-severity" value={input.severity} onChange={(event) => patch({ severity: event.target.value as FaultSeverity })} className={fieldClass}>
+        </FormField>
+        <FormField label="Severity" htmlFor="fault-severity">
+          <select id="fault-severity" {...register('severity')} className={fieldClass}>
             <Options items={SEVERITIES.map(({ value }) => value)} />
           </select>
-        </Field>
-        <Field label="What is the machine doing?" htmlFor="fault-description" wide>
-          <textarea id="fault-description" rows={3} placeholder="Symptoms, error code, noise, leak..." value={input.description} onChange={(event) => patch({ description: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-        </Field>
-        <Field label="Assign technician" htmlFor="fault-technician">
-          <select id="fault-technician" value={input.technician} onChange={(event) => patch({ technician: event.target.value })} className={fieldClass}>
+        </FormField>
+        <FormField label="What is the machine doing?" htmlFor="fault-description" wide>
+          <textarea id="fault-description" rows={3} placeholder="Symptoms, error code, noise, leak..." {...register('description', { validate: (value) => value.trim() !== '' })} className={`${fieldClass} h-auto py-2`} />
+        </FormField>
+        <FormField label="Assign technician" htmlFor="fault-technician">
+          <select id="fault-technician" {...register('technician')} className={fieldClass}>
             <option value="">Not assigned yet</option>
             <Options items={TECHNICIANS} />
           </select>
-        </Field>
-        <Field label="Estimated downtime (minutes)" htmlFor="fault-downtime">
-          <input id="fault-downtime" type="number" min={0} step={15} value={input.downtimeMin} onChange={(event) => patch({ downtimeMin: Math.max(0, Number(event.target.value)) })} className={fieldClass} />
-        </Field>
+        </FormField>
+        <FormField label="Estimated downtime (minutes)" htmlFor="fault-downtime">
+          <input id="fault-downtime" type="number" min={0} step={15} {...register('downtimeMin', { setValueAs: (value) => Math.max(0, Number(value)) })} className={fieldClass} />
+        </FormField>
         <p className="text-[11px] text-muted sm:col-span-2">Reported by {CURRENT_USER}, now.</p>
         {stops ? (
           <p className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-ink sm:col-span-2" role="alert">
             <TriangleAlert className="mt-px size-4 shrink-0 text-danger" aria-hidden="true" />
             <span>
-              A {input.severity.toLowerCase()} fault takes the machine out of service: it is set to Fault and no new jobs can be assigned.
+              A {severity.toLowerCase()} fault takes the machine out of service: it is set to Fault and no new jobs can be assigned.
               {machine.job && ` Order #${machine.job.orderId} is taken off the machine and must be moved to another one.`}
             </span>
           </p>
         ) : (
           <p className="rounded-lg bg-field px-3 py-2 text-xs text-muted sm:col-span-2">
-            A {input.severity.toLowerCase()} fault is logged for the technician; the machine stays in service.
+            A {severity.toLowerCase()} fault is logged for the technician; the machine stays in service.
           </p>
         )}
       </form>
@@ -141,8 +130,10 @@ function FaultDialog({ machine, onClose, onSubmit }: { machine: Machine; onClose
 
 function MaintenanceDialog({ machine, now, onClose, onSubmit }: { machine: Machine; now: number; onClose: () => void; onSubmit: (input: MaintenanceInput) => void }) {
   const today = toDateKey(now)
-  const [input, setInput] = useState<MaintenanceInput>({ date: today, time: '09:00', type: MAINTENANCE_TYPES[1], technician: machine.technician || TECHNICIANS[0], durationMin: 90, cost: 25_000, description: '' })
-  const patch = (change: Partial<MaintenanceInput>) => setInput({ ...input, ...change })
+  const { register, handleSubmit, control } = useForm<MaintenanceInput>({
+    defaultValues: { date: today, time: '09:00', type: MAINTENANCE_TYPES[1], technician: machine.technician || TECHNICIANS[0], durationMin: 90, cost: 25_000, description: '' },
+  })
+  const date = useWatch({ control, name: 'date' })
   return (
     <Modal
       open
@@ -154,7 +145,7 @@ function MaintenanceDialog({ machine, now, onClose, onSubmit }: { machine: Machi
           <button type="button" onClick={onClose} className={secondaryButton}>
             Cancel
           </button>
-          <button type="submit" form="maintenance-form" disabled={!input.date || input.date < today} className={primaryButton}>
+          <button type="submit" form="maintenance-form" disabled={!date || date < today} className={primaryButton}>
             Schedule Maintenance
           </button>
         </>
@@ -163,36 +154,33 @@ function MaintenanceDialog({ machine, now, onClose, onSubmit }: { machine: Machi
       <form
         id="maintenance-form"
         className="grid gap-3 sm:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit({ ...input, description: input.description.trim() || input.type })
-        }}
+        onSubmit={handleSubmit((input) => onSubmit({ ...input, description: input.description.trim() || input.type }))}
       >
-        <Field label="Maintenance type" htmlFor="maintenance-type">
-          <select id="maintenance-type" value={input.type} onChange={(event) => patch({ type: event.target.value })} className={fieldClass}>
+        <FormField label="Maintenance type" htmlFor="maintenance-type">
+          <select id="maintenance-type" {...register('type')} className={fieldClass}>
             <Options items={MAINTENANCE_TYPES} />
           </select>
-        </Field>
-        <Field label="Technician" htmlFor="maintenance-technician">
-          <select id="maintenance-technician" value={input.technician} onChange={(event) => patch({ technician: event.target.value })} className={fieldClass}>
+        </FormField>
+        <FormField label="Technician" htmlFor="maintenance-technician">
+          <select id="maintenance-technician" {...register('technician')} className={fieldClass}>
             <Options items={TECHNICIANS} />
           </select>
-        </Field>
-        <Field label="Date" htmlFor="maintenance-date">
-          <input id="maintenance-date" type="date" min={today} value={input.date} onChange={(event) => patch({ date: event.target.value })} className={fieldClass} />
-        </Field>
-        <Field label="Start time" htmlFor="maintenance-time">
-          <input id="maintenance-time" type="time" value={input.time} onChange={(event) => patch({ time: event.target.value })} className={fieldClass} />
-        </Field>
-        <Field label="Expected duration (minutes)" htmlFor="maintenance-duration">
-          <input id="maintenance-duration" type="number" min={15} step={15} value={input.durationMin} onChange={(event) => patch({ durationMin: Math.max(15, Number(event.target.value)) })} className={fieldClass} />
-        </Field>
-        <Field label="Estimated cost (XAF)" htmlFor="maintenance-cost">
-          <input id="maintenance-cost" type="number" min={0} step={500} value={input.cost} onChange={(event) => patch({ cost: Math.max(0, Number(event.target.value)) })} className={fieldClass} />
-        </Field>
-        <Field label="Notes" htmlFor="maintenance-notes" wide>
-          <textarea id="maintenance-notes" rows={2} value={input.description} onChange={(event) => patch({ description: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-        </Field>
+        </FormField>
+        <FormField label="Date" htmlFor="maintenance-date">
+          <input id="maintenance-date" type="date" min={today} {...register('date', { validate: (value) => value !== '' && value >= today })} className={fieldClass} />
+        </FormField>
+        <FormField label="Start time" htmlFor="maintenance-time">
+          <input id="maintenance-time" type="time" {...register('time')} className={fieldClass} />
+        </FormField>
+        <FormField label="Expected duration (minutes)" htmlFor="maintenance-duration">
+          <input id="maintenance-duration" type="number" min={15} step={15} {...register('durationMin', { setValueAs: (value) => Math.max(15, Number(value)) })} className={fieldClass} />
+        </FormField>
+        <FormField label="Estimated cost (XAF)" htmlFor="maintenance-cost">
+          <input id="maintenance-cost" type="number" min={0} step={500} {...register('cost', { setValueAs: (value) => Math.max(0, Number(value)) })} className={fieldClass} />
+        </FormField>
+        <FormField label="Notes" htmlFor="maintenance-notes" wide>
+          <textarea id="maintenance-notes" rows={2} {...register('description')} className={`${fieldClass} h-auto py-2`} />
+        </FormField>
         {machine.queue.length > 0 && (
           <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-ink sm:col-span-2">
             {machine.queue.length} queued {machine.queue.length === 1 ? 'job is' : 'jobs are'} waiting on this machine. Plan the service around them or move them first.
@@ -248,20 +236,20 @@ function AssignJobDialog({
     >
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-4">
-          <Field label="Order" htmlFor="assign-order">
+          <FormField label="Order" htmlFor="assign-order">
             <input id="assign-order" autoComplete="off" placeholder="ORD-10542" value={input.orderId} onChange={(event) => patch({ orderId: event.target.value })} className={`${fieldClass} font-mono`} />
-          </Field>
-          <Field label="Customer" htmlFor="assign-customer">
+          </FormField>
+          <FormField label="Customer" htmlFor="assign-customer">
             <input id="assign-customer" autoComplete="off" value={input.customer} onChange={(event) => patch({ customer: event.target.value })} className={fieldClass} />
-          </Field>
-          <Field label="Service" htmlFor="assign-service">
+          </FormField>
+          <FormField label="Service" htmlFor="assign-service">
             <select id="assign-service" value={input.service} onChange={(event) => patch({ service: event.target.value })} className={fieldClass}>
               <Options items={services} />
             </select>
-          </Field>
-          <Field label="Load (kg)" htmlFor="assign-load">
+          </FormField>
+          <FormField label="Load (kg)" htmlFor="assign-load">
             <input id="assign-load" type="number" min={0.5} step={0.5} value={input.loadKg} onChange={(event) => patch({ loadKg: Math.max(0.5, Number(event.target.value)) })} className={fieldClass} />
-          </Field>
+          </FormField>
         </div>
         <label className="flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-ink">
           <input type="checkbox" checked={input.priority === 'High'} onChange={(event) => patch({ priority: event.target.checked ? 'High' : 'Normal' })} className="size-4 accent-brand" />
@@ -350,19 +338,19 @@ function TransferDialog({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Current branch" htmlFor="transfer-from">
+        <FormField label="Current branch" htmlFor="transfer-from">
           <input id="transfer-from" disabled value={branches.find(({ id }) => id === machine.branchId)?.name ?? machine.branchId} className={`${fieldClass} disabled:opacity-60`} />
-        </Field>
-        <Field label="Destination branch" htmlFor="transfer-to">
+        </FormField>
+        <FormField label="Destination branch" htmlFor="transfer-to">
           <select id="transfer-to" value={branchId} onChange={(event) => setBranchId(event.target.value)} className={fieldClass}>
             {others.map(({ id, name }) => (
               <option key={id} value={id}>{name}</option>
             ))}
           </select>
-        </Field>
-        <Field label="Reason" htmlFor="transfer-reason" wide>
+        </FormField>
+        <FormField label="Reason" htmlFor="transfer-reason" wide>
           <input id="transfer-reason" placeholder="e.g. Rebalancing dryer capacity" value={reason} onChange={(event) => setReason(event.target.value)} className={fieldClass} />
-        </Field>
+        </FormField>
         <p className="text-[11px] text-muted sm:col-span-2">
           Transfer date {formatDay(toDateKey(now), true)} · responsible: {CURRENT_USER}. The move is kept in the machine’s transfer history.
         </p>
@@ -406,14 +394,14 @@ function RetireDialog({ machine, onClose, onSubmit }: { machine: Machine; onClos
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Retirement reason" htmlFor="retire-reason" wide>
+        <FormField label="Retirement reason" htmlFor="retire-reason" wide>
           <input id="retire-reason" placeholder="e.g. Beyond economical repair" value={reason} onChange={(event) => setReason(event.target.value)} className={fieldClass} />
-        </Field>
-        <Field label="Final condition" htmlFor="retire-condition">
+        </FormField>
+        <FormField label="Final condition" htmlFor="retire-condition">
           <select id="retire-condition" value={condition} onChange={(event) => setCondition(event.target.value)} className={fieldClass}>
             <Options items={['Working', 'Needs repair', 'Not working', 'Scrapped']} />
           </select>
-        </Field>
+        </FormField>
         <p className="rounded-lg bg-field px-3 py-2 text-xs text-muted sm:col-span-2">
           The machine is removed from job assignment and scheduling.
           {machine.queue.length > 0 && ` Its ${machine.queue.length} queued ${machine.queue.length === 1 ? 'job is' : 'jobs are'} cleared and must be reassigned.`}{' '}

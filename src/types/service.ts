@@ -23,7 +23,10 @@ export type ExpressConfig = {
 }
 
 export type BranchSetting = {
+  // Branch name, for display
   branch: string
+  // Branch uuid from the branches API (absent on older sample data)
+  branchId?: string
   available: boolean
   // null = use the global price
   priceOverride: number | null
@@ -66,6 +69,8 @@ export type ServiceStats = {
 export type LaundryService = {
   // The service code, e.g. WAF-001
   id: string
+  // What the API addresses the service by; absent until it's saved there
+  uuid?: string
   name: string
   category: string
   description: string

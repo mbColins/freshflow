@@ -32,6 +32,8 @@ export function applySettings(settings: AppSettings) {
 const FRENCH: Record<string, string> = {
   Operations: 'Opérations',
   Management: 'Gestion',
+  Platform: 'Plateforme',
+  Tenants: 'Organisations',
   Dashboard: 'Tableau de bord',
   Orders: 'Commandes',
   Customers: 'Clients',
@@ -46,6 +48,8 @@ const FRENCH: Record<string, string> = {
   Branches: 'Agences',
   Machines: 'Machines',
   Pricing: 'Tarifs',
+  'Price List': 'Grille tarifaire',
+  'Subscription Plans': "Formules d'abonnement",
   Promotions: 'Promotions',
   Settings: 'Paramètres',
   'Sign out': 'Se déconnecter',

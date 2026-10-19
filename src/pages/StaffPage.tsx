@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { CalendarClock, ClipboardList, Clock, Download, UserPlus } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarClock, ClipboardList, Clock, Download, RotateCcw, UserPlus } from 'lucide-react'
 import { ConfirmDialog } from '../components/orders/OrderDialogs'
 import type { ConfirmRequest } from '../components/orders/OrderDialogs'
 import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
@@ -32,19 +32,25 @@ import {
 } from '../components/staff/StaffPanels'
 import { CURRENT_USER, ORDER_ROLES } from '../constants/orders'
 import { EMPTY_STAFF_FILTERS, STAFF_PERMISSIONS } from '../constants/staff'
-import {
-  SAMPLE_LEAVE,
-  SAMPLE_OPEN_SHIFTS,
-  SAMPLE_STAFF,
-} from '../constants/sampleStaff'
+import useCurrentUser from '../hooks/useCurrentUser'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
+import {
+  useCreateUserMutation,
+  useDeleteUserMutation,
+  useListTenantUsersQuery,
+  useListUsersQuery,
+} from '../services/userApi'
 import type { OrderRole } from '../types/order'
-import type { StaffFilters, StaffMember } from '../types/staff'
+import type { LeaveRequest, OpenShift, StaffFilters, StaffMember } from '../types/staff'
+import { NETWORK_ERROR_MESSAGE, saveFailureMessage, serverMessage } from '../utils/apiErrors'
 import { downloadFile } from '../utils/orders'
-import { matchesStaffFilters, staffToCsv } from '../utils/staff'
+import { matchesStaffFilters, memberFromUser, staffToCsv } from '../utils/staff'
 
 const TOAST_MS = 4000
+// Platform admins (no tenant) read GET /users; one page is enough for now
+// TODO: page through the list once there are more users than this
+const ALL_USERS = { page: 0, size: 100 }
 
 type DialogState =
   | { name: 'assign' | 'attendance'; staffId: string }
@@ -53,10 +59,49 @@ type DialogState =
 
 function StaffPage() {
   const now = useNow()
-  // TODO: replace these in-memory lists with the staff API
-  const [staff, setStaff] = useState(SAMPLE_STAFF)
-  const [leave, setLeave] = useState(SAMPLE_LEAVE)
-  const [openShifts, setOpenShifts] = useState(SAMPLE_OPEN_SHIFTS)
+  const me = useCurrentUser()
+  // Who actions are stamped with
+  const actor = me.name || CURRENT_USER
+  // A tenant's staff come from GET /users/tenant. GET /users isn't limited to
+  // one tenant, so it's only used for a platform admin, who has no tenant.
+  const hasTenant = Boolean(me.user?.tenant)
+  const tenantUsers = useListTenantUsersQuery(undefined, { skip: !me.user || !hasTenant })
+  const allUsers = useListUsersQuery(ALL_USERS, { skip: !me.user || hasTenant })
+  const source = hasTenant ? tenantUsers : allUsers
+  const users = hasTenant ? tenantUsers.data : allUsers.data?.items
+  const loadingStaff = me.isLoading || source.isLoading
+  const loadFailed = me.isError || source.isError
+  // The API has no shifts, attendance, tasks or leave yet, so what's recorded
+  // here is kept for this session only, laid over the server's users:
+  // `overlay` by uuid after any change, `pending` by username for the extras
+  // entered when creating someone (the create response has no uuid)
+  // TODO: replace with the staff endpoints once the backend has them
+  const [overlay, setOverlay] = useState<Record<string, StaffMember>>({})
+  const [pending, setPending] = useState<Record<string, Partial<StaffMember>>>({})
+  const staff = useMemo(
+    () =>
+      (users ?? []).map((user) => {
+        const fromApi = memberFromUser(user)
+        const local = overlay[user.uuid] ?? { ...fromApi, ...pending[user.username] }
+        return {
+          ...local,
+          // The server owns the account details
+          id: fromApi.id,
+          username: fromApi.username,
+          name: fromApi.name,
+          phone: fromApi.phone,
+          email: fromApi.email,
+          hiredAt: fromApi.hiredAt,
+          lastLoginAt: fromApi.lastLoginAt,
+          status: user.active ? local.status : 'suspended',
+        }
+      }),
+    [users, overlay, pending],
+  )
+  const [leave, setLeave] = useState<LeaveRequest[]>([])
+  const [openShifts, setOpenShifts] = useState<OpenShift[]>([])
+  const [createUser, { error: createError, isLoading: creating, reset: resetCreate }] = useCreateUserMutation()
+  const [deleteUser] = useDeleteUserMutation()
   const [filters, setFilters] = useState<StaffFilters>(EMPTY_STAFF_FILTERS)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
@@ -114,13 +159,14 @@ function StaffPage() {
     event: string,
   ) {
     const at = new Date().toISOString()
-    setStaff((current) =>
-      current.map((member) =>
-        ids.includes(member.id)
-          ? { ...change(member), activity: [{ at, text: event }, ...member.activity] }
-          : member,
-      ),
-    )
+    const changed = staff.filter((member) => ids.includes(member.id))
+    setOverlay((current) => {
+      const next = { ...current }
+      for (const member of changed) {
+        next[member.id] = { ...change(member), activity: [{ at, text: event }, ...member.activity] }
+      }
+      return next
+    })
   }
 
   function handleAssign(staffId: string, task: string, reference: string) {
@@ -135,7 +181,7 @@ function StaffPage() {
         assignmentRef: reference,
         tasksAssigned: current.tasksAssigned + 1,
       }),
-      `Assigned by ${CURRENT_USER}: ${assignment}`,
+      `Assigned by ${actor}: ${assignment}`,
     )
     setDialog(null)
     setToast(`${member.name} assigned: ${task}`)
@@ -164,8 +210,8 @@ function StaffPage() {
         }
       },
       action === 'Mark absent'
-        ? `Marked absent by ${CURRENT_USER}`
-        : `${action} at ${time} (recorded by ${CURRENT_USER})`,
+        ? `Marked absent by ${actor}`
+        : `${action} at ${time} (recorded by ${actor})`,
     )
     setDialog(null)
     setToast(`${member.name}: ${action.toLowerCase()} recorded`)
@@ -212,7 +258,7 @@ function StaffPage() {
           ? {
               ...request,
               status: approve ? 'Approved' : 'Rejected',
-              approver: CURRENT_USER,
+              approver: actor,
             }
           : request,
       ),
@@ -220,56 +266,64 @@ function StaffPage() {
     setToast(approve ? 'Leave approved' : 'Leave rejected')
   }
 
-  function handleCreate(input: NewStaffInput) {
-    const number =
-      Math.max(...staff.map(({ id }) => Number(id.replace(/\D/g, '')))) + 1
-    const at = new Date().toISOString()
+  // POST /users creates the account and emails the generated password. The
+  // details the API doesn't store yet are kept for this session (see `pending`)
+  async function handleCreate(input: NewStaffInput) {
+    const username = input.username.trim().toLowerCase()
     const name = `${input.firstName} ${input.lastName}`.trim()
-    const member: StaffMember = {
-      id: `EMP-${String(number).padStart(4, '0')}`,
-      name,
-      jobTitle: input.jobTitle.trim(),
-      department: input.department,
-      branch: input.branch,
-      phone: input.phone.trim(),
-      email: input.email.trim(),
-      employment: input.employment,
-      hiredAt: at,
-      manager: CURRENT_USER,
-      template: input.template,
-      status: 'offline',
-      shiftStart: input.shiftStart,
-      shiftEnd: input.shiftEnd,
-      workingDays: input.workingDays,
-      clockIn: '',
-      breakMinutes: 0,
-      assignment: '',
-      assignmentRef: '',
-      tasksAssigned: 0,
-      tasksDone: 0,
-      tasksOverdue: 0,
-      capacity: 12,
-      attendanceRate: 100,
-      lateThisMonth: 0,
-      score: 0,
-      onTime: 0,
-      quality: 0,
-      rating: 0,
-      skills: input.skills,
-      certification: null,
-      trainingDone: 0,
-      trainingTotal: 10,
-      emergencyContact: input.emergencyContact.trim() || 'Not provided',
-      monthlySalary: 0,
-      leaveBalance: 0,
-      twoFactor: input.twoFactor,
-      loginAccess: input.loginAccess,
-      lastLoginAt: at,
-      activity: [{ at, text: `Profile created by ${CURRENT_USER}` }],
+    try {
+      await createUser({
+        username,
+        firstName: input.firstName.trim(),
+        lastName: input.lastName.trim(),
+        city: input.city.trim(),
+        neighborhood: input.neighborhood.trim(),
+        phoneNumber: input.phone.trim(),
+        email: input.email.trim().toLowerCase(),
+        userType: input.userType,
+        ...(input.branchUuid ? { branch: input.branchUuid } : {}),
+        ...(input.roleId !== null ? { role: input.roleId } : {}),
+      }).unwrap()
+    } catch {
+      // `createError` drives the message in the wizard
+      return
     }
-    setStaff([member, ...staff])
+    setPending((current) => ({
+      ...current,
+      [username]: {
+        jobTitle: input.jobTitle.trim(),
+        department: input.department,
+        employment: input.employment,
+        emergencyContact: input.emergencyContact.trim() || 'Not provided',
+        twoFactor: input.twoFactor,
+        shiftStart: input.shiftStart,
+        shiftEnd: input.shiftEnd,
+        workingDays: input.workingDays,
+        skills: input.skills,
+        manager: actor,
+      },
+    }))
     setDialog(null)
-    setToast(`${name} added as ${member.id}`)
+    setToast(`${name} added. Their sign-in details were emailed to ${input.email.trim()}.`)
+  }
+
+  function handleDelete(id: string) {
+    const member = staff.find((item) => item.id === id)!
+    setConfirm({
+      title: `Delete ${member.name}’s account?`,
+      body: 'The user is removed from the server and can no longer sign in. This can’t be undone; to keep their history, disable the account instead.',
+      confirmLabel: 'Delete Account',
+      destructive: true,
+      onConfirm: () => {
+        deleteUser(id)
+          .unwrap()
+          .then(() => {
+            setOpenId(null)
+            setToast(`${member.name}’s account deleted`)
+          })
+          .catch((error: unknown) => setToast(saveFailureMessage(error, `${member.name}’s account wasn’t deleted.`)))
+      },
+    })
   }
 
   function requestSuspend(ids: string[]) {
@@ -282,10 +336,11 @@ function StaffPage() {
         updateStaff(
           ids,
           (member) => ({ ...member, status: 'suspended', assignment: '', assignmentRef: '' }),
-          `Account suspended by ${CURRENT_USER}`,
+          `Account suspended by ${actor}`,
         )
         setSelectedIds([])
-        setToast(`${ids.length} ${ids.length === 1 ? 'account' : 'accounts'} suspended`)
+        // TODO: UserRequest has no status field, so suspension isn't saved yet
+        setToast(`${ids.length} ${ids.length === 1 ? 'account' : 'accounts'} suspended for this session (not saved to the server yet)`)
       },
     })
   }
@@ -296,13 +351,45 @@ function StaffPage() {
       requestSuspend([id])
       return
     }
-    updateStaff([id], (current) => ({ ...current, status: 'offline' }), `Account re-enabled by ${CURRENT_USER}`)
+    updateStaff([id], (current) => ({ ...current, status: 'offline' }), `Account re-enabled by ${actor}`)
     setToast(`${member.name}’s account re-enabled`)
   }
 
   const exportStaff = (list: StaffMember[]) => {
     downloadFile('staff.csv', staffToCsv(list, permissions.performance), 'text/csv;charset=utf-8')
     setToast(`Exported ${list.length} staff`)
+  }
+
+  if (loadingStaff || loadFailed) {
+    return (
+      <div className="space-y-3">
+        <h1 className="text-xl font-bold text-ink">Staff</h1>
+        {loadingStaff ? (
+          <div className="space-y-2 rounded-xl bg-white p-3 ring-1 ring-line" aria-busy="true">
+            <p className="sr-only" role="status">Loading staff…</p>
+            {[0, 1, 2, 3].map((key) => (
+              <div key={key} className="h-14 animate-pulse rounded-md bg-field" />
+            ))}
+          </div>
+        ) : (
+          <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+            <h2 className="text-sm font-bold text-ink">Couldn’t load the staff</h2>
+            <p className="max-w-md text-xs text-muted">
+              {serverMessage(source.error) ?? NETWORK_ERROR_MESSAGE}
+            </p>
+            <button
+              type="button"
+              onClick={() => void source.refetch()}
+              disabled={source.isFetching}
+              className={`${secondaryButton} mt-2`}
+            >
+              <RotateCcw className="size-3.5" aria-hidden="true" />
+              {source.isFetching ? 'Retrying…' : 'Try Again'}
+            </button>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -499,6 +586,7 @@ function StaffPage() {
         onAssign={(staffId) => setDialog({ name: 'assign', staffId })}
         onAttendance={(staffId) => setDialog({ name: 'attendance', staffId })}
         onToggleSuspended={handleToggleSuspended}
+        onDelete={handleDelete}
       />
       {dialog?.name === 'assign' && (
         <AssignWorkDialog
@@ -528,7 +616,15 @@ function StaffPage() {
         <LeaveDialog staff={staff} onClose={() => setDialog(null)} onSubmit={handleLeave} />
       )}
       {dialog?.name === 'add' && (
-        <StaffWizard onClose={() => setDialog(null)} onCreate={handleCreate} />
+        <StaffWizard
+          saving={creating}
+          error={createError ? saveFailureMessage(createError, 'The staff member wasn’t created.', 'The username or email is already in use.') : null}
+          onClose={() => {
+            resetCreate()
+            setDialog(null)
+          }}
+          onCreate={(input) => void handleCreate(input)}
+        />
       )}
       {confirm && (
         <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { RefObject } from 'react'
 import {
   Bookmark,
@@ -10,10 +9,11 @@ import {
 import { PRESET_VIEWS } from '../../constants/orders'
 import type { OrderFilters, SavedView } from '../../types/order'
 import { countActiveFilters } from '../../utils/orders'
+import InlineNameForm from '../ui/InlineNameForm'
 import Menu, { MenuItem } from '../ui/Menu'
 import SegmentedControl from '../ui/SegmentedControl'
 import FilterSelect from './OrderFilterFields'
-import { fieldClass, primaryButton, secondaryButton } from './styles'
+import { fieldClass, secondaryButton } from './styles'
 
 export type OrdersView = 'table' | 'kanban'
 
@@ -57,7 +57,6 @@ function OrdersToolbar({
   onToggleColumn,
   showFinancials,
 }: OrdersToolbarProps) {
-  const [viewName, setViewName] = useState('')
   const activeCount = countActiveFilters(filters)
 
   return (
@@ -171,31 +170,16 @@ function OrdersToolbar({
                     </button>
                   </div>
                 ))}
-                <form
-                  className="mt-1 flex gap-1 border-t border-line p-1 pt-2"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    if (!viewName.trim()) return
-                    onSaveView(viewName.trim())
-                    setViewName('')
+                <InlineNameForm
+                  label="Name for the current filters"
+                  placeholder="Save current filters as…"
+                  disabled={activeCount === 0}
+                  className="mt-1 border-t border-line p-1 pt-2"
+                  onSave={(name) => {
+                    onSaveView(name)
                     close()
                   }}
-                >
-                  <input
-                    aria-label="Name for the current filters"
-                    placeholder="Save current filters as…"
-                    value={viewName}
-                    onChange={(event) => setViewName(event.target.value)}
-                    className={`${fieldClass} h-8`}
-                  />
-                  <button
-                    type="submit"
-                    disabled={!viewName.trim() || activeCount === 0}
-                    className={`${primaryButton} h-8`}
-                  >
-                    Save
-                  </button>
-                </form>
+                />
               </div>
             )}
           </Menu>

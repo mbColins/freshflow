@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Printer } from 'lucide-react'
 import {
   PAYMENT_PROVIDERS,
@@ -668,15 +668,12 @@ export function CashAdjustDialog({
   onClose: () => void
   onSave: (amount: number, reason: string) => void
 }) {
-  const [amount, setAmount] = useState('')
-  const [reason, setReason] = useState('')
+  const { register, handleSubmit, control } = useForm({
+    defaultValues: { amount: '', reason: '' },
+  })
+  const [amount, reason] = useWatch({ control, name: ['amount', 'reason'] })
   const value = Math.trunc(Number(amount))
   const valid = value !== 0 && reason.trim() !== ''
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (valid) onSave(value, reason.trim())
-  }
 
   return (
     <Modal
@@ -686,7 +683,12 @@ export function CashAdjustDialog({
       title="Cash Adjustment"
       subtitle="Add float or record a payout. Recorded in the audit trail."
     >
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form
+        onSubmit={handleSubmit((values) => {
+          if (valid) onSave(Math.trunc(Number(values.amount)), values.reason.trim())
+        })}
+        className="space-y-3"
+      >
         <div>
           <label htmlFor="adjust-amount" className={labelClass}>
             Amount in XAF (negative for a payout)
@@ -696,8 +698,7 @@ export function CashAdjustDialog({
             type="number"
             autoFocus
             placeholder="e.g. 50000 or -35000"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
+            {...register('amount')}
             className={fieldClass}
           />
         </div>
@@ -705,12 +706,7 @@ export function CashAdjustDialog({
           <label htmlFor="adjust-reason" className={labelClass}>
             Reason
           </label>
-          <input
-            id="adjust-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            className={fieldClass}
-          />
+          <input id="adjust-reason" {...register('reason')} className={fieldClass} />
         </div>
         <button type="submit" disabled={!valid} className={`${primaryButton} w-full`}>
           Save Adjustment

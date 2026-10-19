@@ -5,6 +5,7 @@ import type { StageId } from '../../constants/pipeline'
 import Badge from '../ui/Badge'
 import type { BadgeTone } from '../ui/Badge'
 import DashboardCard from './DashboardCard'
+import { formatXaf } from '../../utils/orders'
 
 type Order = {
   id: string
@@ -106,10 +107,6 @@ const filterClass =
   'h-8 rounded-md bg-field px-2.5 text-[11px] font-semibold text-ink outline-none transition focus:ring-2 focus:ring-brand'
 const iconButtonClass =
   'flex size-7 items-center justify-center rounded-md text-muted transition hover:bg-field hover:text-ink focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none'
-
-function formatXaf(value: number) {
-  return `XAF ${value.toLocaleString('en-US')}`
-}
 
 function StagePill({ stage, detail }: { stage: StageId; detail: string }) {
   const { label, color } = getStage(stage)

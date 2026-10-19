@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import {
-  Archive,
   ArrowLeft,
   Banknote,
   Ban,
@@ -17,6 +16,7 @@ import {
   StickyNote,
   UserCheck,
   X,
+  Trash2,
 } from 'lucide-react'
 import {
   Avatar,
@@ -47,7 +47,9 @@ import { primaryButton, secondaryButton } from '../components/orders/styles'
 import Menu, { MenuItem } from '../components/ui/Menu'
 import { CUSTOMER_PERMISSIONS, CUSTOMER_TAGS } from '../constants/customers'
 import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
-import useCustomers, { customerStore } from '../hooks/useCustomers'
+import { useChangeCustomers, useCustomersQuery } from '../hooks/useCustomers'
+import { useDeleteCustomerMutation, useGetCustomerQuery } from '../services/customerApi'
+import { saveFailureMessage } from '../utils/apiErrors'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
 import type { Address, CrmCustomer } from '../types/customer'
@@ -82,7 +84,14 @@ function CustomerProfilePage() {
   const { customerId } = useParams()
   const navigate = useNavigate()
   const now = useNow()
-  const customer = useCustomers().find(({ id }) => id === customerId)
+  const list = useCustomersQuery()
+  // The latest copy from GET /customer/{id}, falling back to the list's
+  const single = useGetCustomerQuery(customerId ?? '', { skip: !customerId })
+  const listed = list.items.find(({ id }) => id === customerId)
+  // The list fills in the branch name when the single fetch only has its uuid
+  const customer = single.data ? { ...single.data, branch: single.data.branch || listed?.branch || '' } : listed
+  const changeCustomers = useChangeCustomers()
+  const [deleteCustomer] = useDeleteCustomerMutation()
   const [role] = useLocalStorage<OrderRole>('customers.role', 'manager')
   const [tab, setTab] = useState('overview')
   const [dialog, setDialog] = useState<DialogState | null>(null)
@@ -98,12 +107,22 @@ function CustomerProfilePage() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
+  if (!customer && (single.isLoading || list.isLoading)) {
+    return (
+      <div className="space-y-3" aria-busy="true">
+        <p className="sr-only" role="status">Loading customer…</p>
+        <div className="h-32 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+        <div className="h-72 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+      </div>
+    )
+  }
+
   if (!customer || customer.archived) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
         <h1 className="text-sm font-bold text-ink">Customer not found</h1>
         <p className="text-xs text-muted">
-          This profile doesn’t exist or has been archived.
+          This profile doesn’t exist or was deleted.
         </p>
         <Link to="/customers" className={`${primaryButton} mt-2`}>
           Back to Customers
@@ -112,8 +131,12 @@ function CustomerProfilePage() {
     )
   }
 
-  const change = (update: (current: CrmCustomer) => CrmCustomer) =>
-    customerStore.update([customer.id], update)
+  // Shown at once; the fields the backend stores are saved (see useChangeCustomers)
+  const change = (update: (current: CrmCustomer) => CrmCustomer) => {
+    void changeCustomers([customer], update).then((refused) => {
+      if (refused) setToast('The change wasn’t saved. The server refused it, try again.')
+    })
+  }
   const logged = (current: CrmCustomer, text: string): CrmCustomer => ({
     ...current,
     activity: [{ at: new Date().toISOString(), text }, ...current.activity],
@@ -162,15 +185,19 @@ function CustomerProfilePage() {
     })
   }
 
-  function requestArchive() {
+  function requestDelete() {
     setConfirm({
-      title: `Archive ${customer!.name}?`,
-      body: 'Archived customers disappear from the list and can no longer be selected for new orders. Their order and payment history is kept.',
-      confirmLabel: 'Archive Customer',
+      title: `Delete ${customer!.name}?`,
+      body: 'The customer is removed from the system and can no longer be selected for new orders. This can’t be undone.',
+      confirmLabel: 'Delete Customer',
       destructive: true,
-      onConfirm: () => {
-        change((current) => ({ ...current, archived: true }))
-        navigate('/customers')
+      onConfirm: async () => {
+        try {
+          await deleteCustomer(customer!.id).unwrap()
+          navigate('/customers', { replace: true })
+        } catch (error) {
+          setToast(saveFailureMessage(error, `${customer!.name} wasn’t deleted.`, 'They still have orders that depend on them.'))
+        }
       },
     })
   }
@@ -347,7 +374,7 @@ function CustomerProfilePage() {
                             })
                           : item('Suspend Customer', Ban, requestSuspend, true))}
                       {permissions.manage &&
-                        item('Archive Customer', Archive, requestArchive, true)}
+                        item('Delete Customer', Trash2, requestDelete, true)}
                     </>
                   )
                 }}
@@ -421,8 +448,8 @@ function CustomerProfilePage() {
           customer={customer}
           canManage={permissions.manage}
           onClose={() => setDialog(null)}
-          onSave={(saved) => {
-            change(() => saved)
+          onSaved={() => {
+            // The dialog has saved it already
             setDialog(null)
             setToast('Customer updated')
           }}

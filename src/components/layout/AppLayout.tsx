@@ -1,22 +1,24 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router'
+import { Outlet } from 'react-router'
 import useSettings from '../../hooks/useSettings'
+import { useLogoutMutation } from '../../services/authApi'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 
 function AppLayout() {
   const settings = useSettings()
-  const navigate = useNavigate()
+  const [logout] = useLogoutMutation()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(settings.sidebarCollapsed)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
-  // Auto-lock: back to sign-in after a stretch with no mouse or keyboard activity
+  // Auto-lock: end the session after a stretch with no mouse or keyboard
+  // activity. RequireAuth then shows sign-in and returns here afterwards.
   useEffect(() => {
     if (settings.autoLockMinutes <= 0) return
     let timer = 0
     const restart = () => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => navigate('/login'), settings.autoLockMinutes * 60_000)
+      timer = window.setTimeout(() => logout(), settings.autoLockMinutes * 60_000)
     }
     const events = ['pointerdown', 'pointermove', 'keydown', 'wheel'] as const
     events.forEach((name) => window.addEventListener(name, restart, { passive: true }))
@@ -25,7 +27,7 @@ function AppLayout() {
       window.clearTimeout(timer)
       events.forEach((name) => window.removeEventListener(name, restart))
     }
-  }, [settings.autoLockMinutes, navigate])
+  }, [settings.autoLockMinutes, logout])
 
   return (
     <div className="flex min-h-svh bg-canvas text-ink antialiased">

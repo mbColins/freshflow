@@ -47,6 +47,7 @@ import {
   JobStatusBadge,
   JobTypeIcon,
 } from './LogisticsBits'
+import { PanelEmpty } from '../ui/Panel'
 
 const smallButton = `${secondaryButton} h-7 px-2.5 text-[11px]`
 
@@ -82,14 +83,6 @@ export function Panel({
       </header>
       <div className="mt-3">{children}</div>
     </section>
-  )
-}
-
-function Empty({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-lg bg-field px-3 py-6 text-center text-xs text-muted">
-      {children}
-    </p>
   )
 }
 
@@ -430,7 +423,7 @@ export function NeedsAttention({ jobs, drivers, now, onOpenJob, onAssign }: Atte
       badge={issues.length > 0 && <Badge tone="danger">{issues.length} actionable</Badge>}
     >
       {issues.length === 0 ? (
-        <Empty>Nothing needs attention right now.</Empty>
+        <PanelEmpty>Nothing needs attention right now.</PanelEmpty>
       ) : (
         <ul className="space-y-2">
           {issues.map(({ job, severity, title, body, action }) => (
@@ -544,7 +537,7 @@ export function DispatchQueues({
         badge={<Badge>{pickups.length}</Badge>}
       >
         {pickups.length === 0 ? (
-          <Empty>No pickups waiting for a driver.</Empty>
+          <PanelEmpty>No pickups waiting for a driver.</PanelEmpty>
         ) : (
           <ul className="space-y-2">
             {pickups.map((job) => (
@@ -565,7 +558,7 @@ export function DispatchQueues({
         badge={<Badge>{deliveries.length}</Badge>}
       >
         {deliveries.length === 0 ? (
-          <Empty>No finished orders waiting for a driver.</Empty>
+          <PanelEmpty>No finished orders waiting for a driver.</PanelEmpty>
         ) : (
           <ul className="space-y-2">
             {deliveries.map((job) => {
@@ -600,7 +593,7 @@ export function DispatchQueues({
         badge={<Badge tone="danger">{express.length}</Badge>}
       >
         {express.length === 0 ? (
-          <Empty>No express jobs in progress.</Empty>
+          <PanelEmpty>No express jobs in progress.</PanelEmpty>
         ) : (
           <ul className="space-y-2">
             {express.map((job) => {
@@ -716,7 +709,7 @@ export function LatestProof({
       badge={latest && <Badge tone="success">Verified</Badge>}
     >
       {!latest ? (
-        <Empty>No completed deliveries yet today.</Empty>
+        <PanelEmpty>No completed deliveries yet today.</PanelEmpty>
       ) : (
         <>
           <p className="text-xs font-semibold text-ink">

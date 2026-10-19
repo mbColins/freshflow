@@ -1,6 +1,6 @@
-import { useSyncExternalStore } from 'react'
 import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY } from '../constants/settings'
 import type { AppSettings } from '../types/settings'
+import { createStore } from './createStore'
 
 // Application preferences for this browser, kept in localStorage.
 // TODO: sync with the user's profile once the settings API exists.
@@ -16,33 +16,22 @@ function load(): AppSettings {
   }
 }
 
-let settings = load()
-const listeners = new Set<() => void>()
-
-function subscribe(listener: () => void) {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
+const store = createStore<AppSettings>(load())
 
 // For code outside React, such as date formatters
-export function getSettings() {
-  return settings
-}
+export const getSettings = store.get
 
 export const settingsStore = {
   save(next: AppSettings) {
-    settings = next
     try {
       window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(next))
     } catch {
       // Storage can be blocked (private mode); the settings still apply until reload
     }
-    listeners.forEach((listener) => listener())
+    store.set(next)
   },
 }
 
-function useSettings() {
-  return useSyncExternalStore(subscribe, getSettings)
-}
+const useSettings = store.useValue
 
 export default useSettings

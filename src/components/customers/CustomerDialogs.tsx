@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { CircleAlert, CircleCheck, Upload } from 'lucide-react'
 import { CAMPAIGN_TEMPLATES, SEGMENTS } from '../../constants/customers'
-import { BRANCHES, PAYMENT_METHODS, SERVICES } from '../../constants/orders'
-import { customerStore } from '../../hooks/useCustomers'
+import { PAYMENT_METHODS, SERVICES } from '../../constants/orders'
+import useBranchNames from '../../hooks/useBranchNames'
 import type {
   Address,
   Consent,
@@ -66,6 +66,8 @@ export function CustomerImportDialog({
   const [headers, setHeaders] = useState<string[]>([])
   const [rows, setRows] = useState<string[][]>([])
   const [mapping, setMapping] = useState<Mapping>(() => guessMapping([]))
+  // Imported customers go to the first of the connected user's branches
+  const firstBranch = useBranchNames().names[0] ?? ''
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -110,13 +112,13 @@ export function CustomerImportDialog({
   const mappingReady = mapping.first_name >= 0 && mapping.phone >= 0
 
   function handleImport() {
-    const firstNumber = Number(customerStore.nextId().replace(/\D/g, ''))
+    // Placeholder ids: the backend assigns the real ones on POST
     onImport(
       valid.map((fields, index) =>
         createCustomer(
-          `CUS-${String(firstNumber + index).padStart(6, '0')}`,
+          `import-${index + 1}`,
           fields,
-          BRANCHES[0],
+          firstBranch,
           SERVICES[0],
         ),
       ),
@@ -442,16 +444,13 @@ export function CustomerPaymentDialog({
   onClose: () => void
   onSubmit: (amount: number, method: PaymentMethod, reference: string) => void
 }) {
-  const [amount, setAmount] = useState(String(customer.outstanding))
-  const [method, setMethod] = useState<PaymentMethod>('Cash')
-  const [reference, setReference] = useState('')
-  const value = Number(amount)
+  const { register, handleSubmit, control } = useForm<{
+    amount: string
+    method: PaymentMethod
+    reference: string
+  }>({ defaultValues: { amount: String(customer.outstanding), method: 'Cash', reference: '' } })
+  const value = Number(useWatch({ control, name: 'amount' }))
   const valid = value > 0 && value <= customer.outstanding
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (valid) onSubmit(value, method, reference.trim())
-  }
 
   return (
     <Modal
@@ -461,7 +460,12 @@ export function CustomerPaymentDialog({
       title="Record Payment"
       subtitle={`${customer.name} · ${formatXaf(customer.outstanding)} outstanding`}
     >
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form
+        onSubmit={handleSubmit(({ amount, method, reference }) => {
+          if (valid) onSubmit(Number(amount), method, reference.trim())
+        })}
+        className="space-y-3"
+      >
         <div>
           <label htmlFor="customer-payment-amount" className={labelClass}>
             Amount (XAF)
@@ -473,8 +477,7 @@ export function CustomerPaymentDialog({
             max={customer.outstanding}
             inputMode="numeric"
             autoFocus
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
+            {...register('amount')}
             className={fieldClass}
           />
         </div>
@@ -482,12 +485,7 @@ export function CustomerPaymentDialog({
           <label htmlFor="customer-payment-method" className={labelClass}>
             Method
           </label>
-          <select
-            id="customer-payment-method"
-            value={method}
-            onChange={(event) => setMethod(event.target.value as PaymentMethod)}
-            className={fieldClass}
-          >
+          <select id="customer-payment-method" {...register('method')} className={fieldClass}>
             {PAYMENT_METHODS.map((option) => (
               <option key={option}>{option}</option>
             ))}
@@ -497,12 +495,7 @@ export function CustomerPaymentDialog({
           <label htmlFor="customer-payment-reference" className={labelClass}>
             Reference (optional)
           </label>
-          <input
-            id="customer-payment-reference"
-            value={reference}
-            onChange={(event) => setReference(event.target.value)}
-            className={fieldClass}
-          />
+          <input id="customer-payment-reference" {...register('reference')} className={fieldClass} />
         </div>
         <button type="submit" disabled={!valid} className={`${primaryButton} w-full`}>
           Record Payment
@@ -530,7 +523,7 @@ export function AddressDialog({
   onClose: () => void
   onSave: (address: Address) => void
 }) {
-  const [draft, setDraft] = useState<Address>(
+  const [defaults] = useState<Address>(
     () =>
       address ?? {
         id: `address-${Date.now()}`,
@@ -543,12 +536,9 @@ export function AddressDialog({
         isDefault: false,
       },
   )
-  const valid = draft.label.trim() !== '' && draft.street.trim() !== ''
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (valid) onSave(draft)
-  }
+  const { register, handleSubmit, control } = useForm<Address>({ defaultValues: defaults })
+  const [label, street] = useWatch({ control, name: ['label', 'street'] })
+  const valid = label.trim() !== '' && street.trim() !== ''
 
   return (
     <Modal
@@ -556,7 +546,12 @@ export function AddressDialog({
       onClose={onClose}
       title={address ? 'Edit Address' : 'Add Address'}
     >
-      <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
+      <form
+        onSubmit={handleSubmit((draft) => {
+          if (valid) onSave(draft)
+        })}
+        className="grid gap-3 sm:grid-cols-2"
+      >
         {ADDRESS_FIELDS.map(({ key, label, wide }) => (
           <div key={key} className={wide ? 'sm:col-span-2' : ''}>
             <label htmlFor={`address-${key}`} className={labelClass}>
@@ -565,10 +560,7 @@ export function AddressDialog({
             <input
               id={`address-${key}`}
               autoComplete="off"
-              value={String(draft[key])}
-              onChange={(event) =>
-                setDraft({ ...draft, [key]: event.target.value })
-              }
+              {...register(key)}
               className={fieldClass}
             />
           </div>
@@ -592,16 +584,15 @@ export function NoteDialog({
   onClose: () => void
   onSave: (text: string) => void
 }) {
-  const [text, setText] = useState('')
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (text.trim()) onSave(text.trim())
-  }
+  const { register, handleSubmit, control } = useForm({ defaultValues: { text: '' } })
+  const text = useWatch({ control, name: 'text' })
 
   return (
     <Modal open onClose={onClose} variant="sm" title="Add Note">
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form
+        onSubmit={handleSubmit((values) => onSave(values.text.trim()))}
+        className="space-y-3"
+      >
         <label htmlFor="customer-note-text" className={labelClass}>
           Note
         </label>
@@ -610,8 +601,7 @@ export function NoteDialog({
           rows={4}
           autoFocus
           placeholder="e.g. Customer prefers clothes folded individually."
-          value={text}
-          onChange={(event) => setText(event.target.value)}
+          {...register('text', { validate: (value) => value.trim() !== '' })}
           className={`${fieldClass} h-auto py-2`}
         />
         <button
@@ -635,16 +625,13 @@ export function PointsDialog({
   onClose: () => void
   onSave: (delta: number, reason: string) => void
 }) {
-  const [delta, setDelta] = useState('')
-  const [reason, setReason] = useState('')
+  const { register, handleSubmit, control } = useForm({
+    defaultValues: { delta: '', reason: '' },
+  })
+  const [delta, reason] = useWatch({ control, name: ['delta', 'reason'] })
   const value = Math.trunc(Number(delta))
   const valid =
     value !== 0 && customer.points + value >= 0 && reason.trim() !== ''
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (valid) onSave(value, reason.trim())
-  }
 
   return (
     <Modal
@@ -654,7 +641,12 @@ export function PointsDialog({
       title="Adjust Loyalty Points"
       subtitle={`${customer.name} · ${customer.points.toLocaleString('en-US')} points`}
     >
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form
+        onSubmit={handleSubmit((values) => {
+          if (valid) onSave(Math.trunc(Number(values.delta)), values.reason.trim())
+        })}
+        className="space-y-3"
+      >
         <div>
           <label htmlFor="points-delta" className={labelClass}>
             Points to add (negative to remove)
@@ -664,8 +656,7 @@ export function PointsDialog({
             type="number"
             autoFocus
             placeholder="e.g. 250 or -100"
-            value={delta}
-            onChange={(event) => setDelta(event.target.value)}
+            {...register('delta')}
             className={fieldClass}
           />
         </div>
@@ -673,12 +664,7 @@ export function PointsDialog({
           <label htmlFor="points-reason" className={labelClass}>
             Reason
           </label>
-          <input
-            id="points-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            className={fieldClass}
-          />
+          <input id="points-reason" {...register('reason')} className={fieldClass} />
         </div>
         <button type="submit" disabled={!valid} className={`${primaryButton} w-full`}>
           Save Adjustment

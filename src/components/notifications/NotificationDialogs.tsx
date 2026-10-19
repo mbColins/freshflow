@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Plus, Send, Trash2, TriangleAlert } from 'lucide-react'
 import {
   AUDIENCES,
@@ -24,26 +23,9 @@ import {
   getUnknownVariables,
   renderTemplate,
 } from '../../utils/notifications'
-import {
-  fieldClass,
-  iconButton,
-  labelClass,
-  primaryButton,
-  secondaryButton,
-  sectionTitle,
-} from '../orders/styles'
+import { fieldClass, iconButton, primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Modal from '../ui/Modal'
-
-function Field({ label, htmlFor, wide = false, children }: { label: string; htmlFor: string; wide?: boolean; children: ReactNode }) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 function ChannelPicker({ value, onChange }: { value: NotificationChannel[]; onChange: (channels: NotificationChannel[]) => void }) {
   return (
@@ -200,14 +182,14 @@ export function ComposeDialog({
               )
             })}
           </div>
-          <Field label="Limit to a branch" htmlFor="compose-branch">
+          <FormField label="Limit to a branch" htmlFor="compose-branch">
             <select id="compose-branch" value={input.branchId} onChange={(event) => patch({ branchId: event.target.value })} className={`${fieldClass} sm:w-72!`}>
               <option value="">All branches</option>
               {branches.map(({ id, name }) => (
                 <option key={id} value={id}>{name}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           <p className="text-[11px] text-muted">Recipient numbers are estimates for the whole business and don’t change with the branch yet.</p>
         </div>
       )}
@@ -222,12 +204,12 @@ export function ComposeDialog({
       {step === 2 && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-3">
-            <Field label="Title" htmlFor="compose-title">
+            <FormField label="Title" htmlFor="compose-title">
               <input id="compose-title" autoComplete="off" placeholder="e.g. Holiday opening hours" value={input.title} onChange={(event) => patch({ title: event.target.value })} className={fieldClass} />
-            </Field>
-            <Field label="Message" htmlFor="compose-message">
+            </FormField>
+            <FormField label="Message" htmlFor="compose-message">
               <textarea id="compose-message" rows={5} value={input.message} onChange={(event) => patch({ message: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-            </Field>
+            </FormField>
           </div>
           <div>
             <p className={sectionTitle}>Preview: {input.channels[0] ?? 'In-App'}</p>
@@ -261,9 +243,9 @@ export function ComposeDialog({
             ))}
           </div>
           {later && (
-            <Field label="Send at" htmlFor="compose-when">
+            <FormField label="Send at" htmlFor="compose-when">
               <input id="compose-when" type="datetime-local" value={input.scheduledFor} onChange={(event) => patch({ scheduledFor: event.target.value })} className={`${fieldClass} sm:w-64!`} />
-            </Field>
+            </FormField>
           )}
         </div>
       )}
@@ -339,9 +321,9 @@ export function RuleDialog({ rule, onClose, onSave }: { rule: AutomationRule; on
       }
     >
       <div className="space-y-4">
-        <Field label="Rule name" htmlFor="rule-name">
+        <FormField label="Rule name" htmlFor="rule-name">
           <input id="rule-name" autoComplete="off" placeholder="e.g. Order ready" value={draft.name} onChange={(event) => patch({ name: event.target.value })} className={`${fieldClass} sm:w-80!`} />
-        </Field>
+        </FormField>
 
         <div className="space-y-2 rounded-lg bg-field p-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -433,35 +415,35 @@ export function TemplateDialog({ template, onClose, onSave }: { template: Messag
     >
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="grid content-start gap-3 sm:grid-cols-2">
-          <Field label="Template name" htmlFor="template-name" wide>
+          <FormField label="Template name" htmlFor="template-name" wide>
             <input id="template-name" autoComplete="off" value={draft.name} onChange={(event) => patch({ name: event.target.value })} className={fieldClass} />
-          </Field>
-          <Field label="Category" htmlFor="template-category">
+          </FormField>
+          <FormField label="Category" htmlFor="template-category">
             <select id="template-category" value={draft.category} onChange={(event) => patch({ category: event.target.value as NotificationCategory })} className={fieldClass}>
               {CATEGORIES.map(({ value, label }) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Channel" htmlFor="template-channel">
+          </FormField>
+          <FormField label="Channel" htmlFor="template-channel">
             <select id="template-channel" value={draft.channel} onChange={(event) => patch({ channel: event.target.value as NotificationChannel })} className={fieldClass}>
               {CHANNELS.map((channel) => (
                 <option key={channel}>{channel}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Language" htmlFor="template-language">
+          </FormField>
+          <FormField label="Language" htmlFor="template-language">
             <select id="template-language" value={draft.language} onChange={(event) => patch({ language: event.target.value as MessageTemplate['language'] })} className={fieldClass}>
               <option>English</option>
               <option>French</option>
             </select>
-          </Field>
-          <Field label={draft.channel === 'Email' ? 'Subject' : 'Title'} htmlFor="template-subject">
+          </FormField>
+          <FormField label={draft.channel === 'Email' ? 'Subject' : 'Title'} htmlFor="template-subject">
             <input id="template-subject" autoComplete="off" value={draft.subject} onChange={(event) => patch({ subject: event.target.value })} className={fieldClass} />
-          </Field>
-          <Field label="Message" htmlFor="template-body" wide>
+          </FormField>
+          <FormField label="Message" htmlFor="template-body" wide>
             <textarea id="template-body" rows={5} value={draft.body} onChange={(event) => patch({ body: event.target.value })} className={`${fieldClass} h-auto py-2 font-mono text-[11px]`} />
-          </Field>
+          </FormField>
           <div className="sm:col-span-2">
             <p className={sectionTitle}>Insert a variable</p>
             <div className="mt-1.5 flex flex-wrap gap-1">

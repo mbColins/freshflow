@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,16 +10,10 @@ import {
   UserPlus,
 } from 'lucide-react'
 import {
-  BRANCHES,
-  CURRENT_USER,
   DELIVERY_FEE,
   EXPRESS_SURCHARGE_RATE,
   ITEM_PRICES,
   PAYMENT_METHODS,
-  QC_CHECKS,
-  SERVICES,
-  SERVICE_MULTIPLIERS,
-  STAFF,
   TAX_RATE,
 } from '../../constants/orders'
 import type {
@@ -28,7 +22,16 @@ import type {
   Order,
   PaymentMethod,
 } from '../../types/order'
+import { useGetBranchDropdownQuery } from '../../services/branchApi'
+import { useGetCustomerDropdownQuery } from '../../services/customerApi'
+import { useCreateOrderMutation } from '../../services/orderApi'
+import { saveFailureMessage } from '../../utils/apiErrors'
+import { toApiMethod, toApiPaymentMethod, toApiPriority } from '../../utils/orderMapping'
+import type { OrderRequest } from '../../utils/orderMapping'
+import { useGetServiceDropdownQuery } from '../../services/serviceApi'
+import type { ServiceOption } from '../../services/serviceApi'
 import { formatXaf } from '../../utils/orders'
+import FormAlert from '../ui/FormAlert'
 import Modal from '../ui/Modal'
 import {
   fieldClass,
@@ -38,41 +41,42 @@ import {
   secondaryButton,
   sectionTitle,
 } from './styles'
+import { toLocalInput } from '../../utils/dates'
 
 const STEPS = ['Customer', 'Services & Items', 'Options', 'Payment', 'Confirm']
 const ITEM_NAMES = Object.keys(ITEM_PRICES)
 
 export type AfterCreate = 'none' | 'print' | 'send'
 
-type Line = { key: number; name: string; qty: string; service: string }
+// `serviceId` is the service's uuid ('' until the services load)
+type Line = { key: number; name: string; qty: string; serviceId: string }
+
+const NO_SERVICES: ServiceOption[] = []
+
+// What a service's price is per, by pricing model
+const PRICE_UNITS: Record<string, string> = {
+  item: 'item',
+  kg: 'kg',
+  piece: 'piece',
+  fixed: 'order',
+  custom: 'item',
+}
 
 type NewOrderDialogProps = {
   onClose: () => void
-  customers: Customer[]
   // Set when the order is started from a customer's profile
   initialCustomer?: Customer
   initialHandling?: string
-  nextNumber: number
-  onCreate: (order: Order, after: AfterCreate) => void
-}
-
-function getUnitPrice(line: Line) {
-  return Math.round(ITEM_PRICES[line.name] * SERVICE_MULTIPLIERS[line.service])
-}
-
-function toLocalInputValue(time: number) {
-  const date = new Date(time)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  // Called once the backend has created the order, with the order it sent
+  // back (null when the response carried none)
+  onCreated: (order: Order | null, after: AfterCreate) => void
 }
 
 function NewOrderDialog({
   onClose,
-  customers,
   initialCustomer,
   initialHandling = '',
-  nextNumber,
-  onCreate,
+  onCreated,
 }: NewOrderDialogProps) {
   const [step, setStep] = useState(initialCustomer ? 1 : 0)
 
@@ -86,30 +90,72 @@ function NewOrderDialog({
   const [newEmail, setNewEmail] = useState('')
 
   const [lines, setLines] = useState<Line[]>([
-    { key: 0, name: ITEM_NAMES[0], qty: '1', service: SERVICES[0] },
+    { key: 0, name: ITEM_NAMES[0], qty: '1', serviceId: '' },
   ])
   const [nextLineKey, setNextLineKey] = useState(1)
+
+  // ACTIVE services from GET /service/dropdown: the whole tenant for an owner,
+  // their own branch for staff
+  const serviceList = useGetServiceDropdownQuery()
+  const services = serviceList.data ?? NO_SERVICES
+  const firstService = services[0]?.uuid
+  // A line with no service yet (added before the services arrived) uses the first one
+  const serviceIdOf = (line: Line) => line.serviceId || firstService || ''
+  const serviceFor = (line: Line) => services.find(({ uuid }) => uuid === serviceIdOf(line))
+  // The service's base price per unit. Item-priced (custom) services have no
+  // base price in the dropdown, so the sample item prices stand in for those
+  // TODO: price custom services from their item list once the form loads it
+  function getUnitPrice(line: Line) {
+    const service = serviceFor(line)
+    if (!service) return 0
+    if (service.pricingModel === 'custom' && service.basePrice <= 0) return ITEM_PRICES[line.name] ?? 0
+    return service.basePrice
+  }
+  const priceUnit = (line: Line) => PRICE_UNITS[serviceFor(line)?.pricingModel ?? ''] ?? 'item'
+
 
   const [express, setExpress] = useState(false)
   const [method, setMethod] = useState<FulfilmentMethod>('pickup')
   const [address, setAddress] = useState('')
   const [dueAt, setDueAt] = useState(() =>
-    toLocalInputValue(Date.now() + 24 * 3_600_000),
+    toLocalInput(Date.now() + 24 * 3_600_000),
   )
   const [customerNotes, setCustomerNotes] = useState('')
   const [handling, setHandling] = useState(initialHandling)
+
+  // The branch the order is taken at (GET /branch/dropdown: the caller's branches)
+  const branchList = useGetBranchDropdownQuery()
+  const branches = branchList.data ?? []
+  const [chosenBranch, setChosenBranch] = useState('')
+  const branchId = chosenBranch || branches[0]?.uuid || ''
+
+  const [createOrder, { isLoading: creating }] = useCreateOrderMutation()
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const [discount, setDiscount] = useState('')
   const [payMethod, setPayMethod] = useState<PaymentMethod>('Cash')
   const [amountPaid, setAmountPaid] = useState('')
 
-  const needle = customerQuery.trim().toLowerCase()
-  const matches = customers.filter(
-    ({ name, phone }) =>
-      !needle ||
-      name.toLowerCase().includes(needle) ||
-      phone.replace(/\s/g, '').includes(needle.replace(/\s/g, '')),
-  )
+  // Customers come from GET /customer/dropdown, searched on the server as the
+  // user types (after a short pause)
+  const [search, setSearch] = useState('')
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(customerQuery.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [customerQuery])
+  const customerList = useGetCustomerDropdownQuery({ search: search || undefined, size: 10 })
+  const matches: Customer[] = (customerList.data ?? []).map(({ uuid, name }) => ({
+    uuid,
+    name,
+    // Not in the dropdown response
+    phone: '',
+    email: '',
+    type: 'returning',
+    since: '',
+    orders: 0,
+    spent: 0,
+  }))
+  const searching = customerList.isFetching || search !== customerQuery.trim()
 
   const subtotal = lines.reduce(
     (sum, line) => sum + (Number(line.qty) || 0) * getUnitPrice(line),
@@ -129,8 +175,8 @@ function NewOrderDialog({
     isNewCustomer
       ? newName.trim() !== '' && newPhone.trim() !== ''
       : selectedCustomer !== null,
-    lines.length > 0 && lines.every((line) => Number(line.qty) >= 1),
-    dueAt !== '' && (method === 'pickup' || address.trim() !== ''),
+    lines.length > 0 && lines.every((line) => Number(line.qty) >= 1 && serviceFor(line) !== undefined),
+    branchId !== '' && dueAt !== '' && (method === 'pickup' || address.trim() !== ''),
     paid >= 0 && paid <= total,
     true,
   ][step]
@@ -139,77 +185,56 @@ function NewOrderDialog({
     setLines(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)))
   }
 
-  function addLine(service = SERVICES[0]) {
-    setLines([...lines, { key: nextLineKey, name: ITEM_NAMES[0], qty: '1', service }])
+  function addLine(serviceId = firstService ?? '') {
+    setLines([...lines, { key: nextLineKey, name: ITEM_NAMES[0], qty: '1', serviceId }])
     setNextLineKey(nextLineKey + 1)
   }
 
-  function handleCreate(after: AfterCreate) {
-    const createdAt = new Date().toISOString()
-    const customer: Customer = isNewCustomer
-      ? {
-          name: newName.trim(),
-          phone: newPhone.trim(),
-          email: newEmail.trim(),
-          type: 'new',
-          since: new Date().toLocaleDateString('en-GB', {
-            month: 'short',
-            year: 'numeric',
-          }),
-          orders: 0,
-          spent: 0,
+  // The totals shown here are an estimate: the backend prices the order from
+  // its own price lists and sends the final figures back
+  async function handleCreate(after: AfterCreate) {
+    const [firstname = '', ...rest] = newName.trim().split(/\s+/)
+    const request: OrderRequest = {
+      branchId,
+      customerId: isNewCustomer ? null : (selectedCustomer?.uuid ?? null),
+      newCustomer: isNewCustomer
+        ? { firstname, lastname: rest.join(' '), phoneNumber: newPhone.trim(), email: newEmail.trim() }
+        : null,
+      items: lines.map((line) => {
+        const perKg = serviceFor(line)?.pricingModel === 'kg'
+        return {
+          serviceId: serviceIdOf(line),
+          itemType: line.name,
+          quantity: perKg ? 1 : Number(line.qty),
+          weightKg: perKg ? Number(line.qty) : null,
+          condition: 'NORMAL',
+          notes: '',
         }
-      : selectedCustomer!
-
-    onCreate(
-      {
-        id: `ORD-${nextNumber}`,
-        invoice: `INV-${nextNumber}`,
-        customer,
-        items: lines.map((line, index) => ({
-          name: line.name,
-          qty: Number(line.qty),
-          service: line.service,
-          unitPrice: getUnitPrice(line),
-          tag: `T-${nextNumber}-${index + 1}`,
-          condition: 'Normal',
-        })),
-        status: 'received',
-        priority: express ? 'express' : 'normal',
-        createdAt,
-        dueAt: new Date(dueAt).toISOString(),
-        branch: BRANCHES[0],
-        createdBy: CURRENT_USER,
-        assignedTo: STAFF[0],
-        method,
-        address: method === 'delivery' ? address.trim() : undefined,
-        surcharge,
-        discount: discountValue,
-        tax,
-        deliveryFee,
-        payments:
-          paid > 0
-            ? [
-                {
-                  at: createdAt,
-                  amount: paid,
-                  method: payMethod,
-                  reference: '',
-                  by: CURRENT_USER,
-                },
-              ]
-            : [],
-        customerNotes: customerNotes.trim(),
-        staffNotes: '',
-        handling: handling.trim(),
-        qc: {
-          checks: Object.fromEntries(QC_CHECKS.map((check) => [check, false])),
-          result: 'pending',
-        },
-        timeline: [{ at: createdAt, action: 'Order created', by: CURRENT_USER }],
-      },
-      after,
-    )
+      }),
+      priority: toApiPriority(express ? 'express' : 'normal'),
+      fulfilmentMethod: toApiMethod(method),
+      deliveryAddress: method === 'delivery' ? address.trim() : null,
+      dueAt: new Date(dueAt).toISOString(),
+      discount: discountValue,
+      customerNotes: customerNotes.trim(),
+      handlingInstructions: handling.trim(),
+      // TODO: let the user pick who handles the order once staff come from the API
+      assignedToId: null,
+      initialPayment:
+        paid > 0 ? { amount: paid, method: toApiPaymentMethod(payMethod), reference: '' } : null,
+    }
+    setCreateError(null)
+    try {
+      onCreated(await createOrder(request).unwrap(), after)
+    } catch (error) {
+      setCreateError(
+        saveFailureMessage(
+          error,
+          'The order wasn’t created.',
+          'A customer with this phone number already exists. Pick them from the list instead.',
+        ),
+      )
+    }
   }
 
   const totals: [string, number][] = [
@@ -226,11 +251,11 @@ function NewOrderDialog({
       onClose={onClose}
       variant="lg"
       title="New Order"
-      subtitle={`Order #ORD-${nextNumber}${customerName ? ` for ${customerName}` : ''} · Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}
+      subtitle={`${customerName ? `For ${customerName} · ` : ''}Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}
       footer={
         <>
-          <p className="mr-auto text-xs font-bold text-ink">
-            Total: {formatXaf(total)}
+          <p className="mr-auto text-xs font-bold text-ink" title="The server sets the final price">
+            Estimated total: {formatXaf(total)}
           </p>
           {step > 0 && (
             <button
@@ -256,7 +281,8 @@ function NewOrderDialog({
             <>
               <button
                 type="button"
-                onClick={() => handleCreate('send')}
+                disabled={creating}
+                onClick={() => void handleCreate('send')}
                 className={secondaryButton}
               >
                 <Send className="size-4 text-muted" aria-hidden="true" />
@@ -264,7 +290,8 @@ function NewOrderDialog({
               </button>
               <button
                 type="button"
-                onClick={() => handleCreate('print')}
+                disabled={creating}
+                onClick={() => void handleCreate('print')}
                 className={secondaryButton}
               >
                 <Printer className="size-4 text-muted" aria-hidden="true" />
@@ -272,17 +299,24 @@ function NewOrderDialog({
               </button>
               <button
                 type="button"
-                onClick={() => handleCreate('none')}
+                disabled={creating}
+                onClick={() => void handleCreate('none')}
                 className={primaryButton}
               >
                 <Check className="size-4" aria-hidden="true" />
-                Create Order
+                {creating ? 'Creating…' : 'Create Order'}
               </button>
             </>
           )}
         </>
       }
     >
+      {createError && (
+        <div className="mb-4">
+          <FormAlert>{createError}</FormAlert>
+        </div>
+      )}
+
       <ol className="mb-5 flex gap-1" aria-label="Progress">
         {STEPS.map((label, index) => (
           <li
@@ -314,17 +348,37 @@ function NewOrderDialog({
                   id="customer-search"
                   type="search"
                   autoFocus
-                  placeholder="Search customer by name or phone"
+                  placeholder="Search customer by name, company or phone"
                   value={customerQuery}
                   onChange={(event) => setCustomerQuery(event.target.value)}
                   className={fieldClass}
                 />
               </div>
-              <ul className="max-h-56 space-y-1 overflow-y-auto">
+              {customerList.isError && (
+                <p role="alert" className="flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2.5 text-xs font-semibold text-danger">
+                  Couldn’t load the customers.
+                  <button
+                    type="button"
+                    onClick={() => void customerList.refetch()}
+                    disabled={customerList.isFetching}
+                    className="rounded-sm text-brand hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                  >
+                    {customerList.isFetching ? 'Retrying…' : 'Retry'}
+                  </button>
+                </p>
+              )}
+              <ul className="max-h-56 space-y-1 overflow-y-auto" aria-busy={searching}>
+                {customerList.isLoading &&
+                  [0, 1, 2].map((key) => (
+                    <li key={key} className="h-11 animate-pulse rounded-lg bg-field" aria-hidden="true" />
+                  ))}
                 {matches.map((customer) => {
-                  const selected = selectedCustomer?.phone === customer.phone
+                  const selected =
+                    selectedCustomer?.uuid !== undefined
+                      ? selectedCustomer.uuid === customer.uuid
+                      : selectedCustomer?.name === customer.name
                   return (
-                    <li key={customer.phone}>
+                    <li key={customer.uuid}>
                       <button
                         type="button"
                         aria-pressed={selected}
@@ -339,20 +393,17 @@ function NewOrderDialog({
                           <span className="block font-semibold text-ink">
                             {customer.name}
                           </span>
-                          <span className="text-[11px] text-muted">
-                            {customer.phone} · {customer.email}
-                          </span>
                         </span>
-                        <span className="shrink-0 text-[11px] text-muted">
-                          {customer.orders} previous orders
-                        </span>
+                        {selected && (
+                          <span className="shrink-0 text-[11px] font-semibold text-brand">Selected</span>
+                        )}
                       </button>
                     </li>
                   )
                 })}
-                {matches.length === 0 && (
+                {customerList.isSuccess && !searching && matches.length === 0 && (
                   <li className="rounded-lg bg-field px-3 py-4 text-center text-xs text-muted">
-                    No customer matches “{customerQuery}”.
+                    {search ? `No customer matches “${search}”.` : 'No customers yet.'}
                   </li>
                 )}
               </ul>
@@ -424,6 +475,24 @@ function NewOrderDialog({
 
       {step === 1 && (
         <div className="space-y-3">
+          {serviceList.isError && (
+            <p role="alert" className="flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2.5 text-xs font-semibold text-danger">
+              Couldn’t load the services.
+              <button
+                type="button"
+                onClick={() => void serviceList.refetch()}
+                disabled={serviceList.isFetching}
+                className="rounded-sm text-brand hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+              >
+                {serviceList.isFetching ? 'Retrying…' : 'Retry'}
+              </button>
+            </p>
+          )}
+          {serviceList.isSuccess && services.length === 0 && (
+            <p className="rounded-lg bg-field px-3 py-2.5 text-xs text-muted">
+              There are no active services to order yet. Publish a service first.
+            </p>
+          )}
           <ul className="space-y-2">
             {lines.map((line) => (
               <li
@@ -472,19 +541,24 @@ function NewOrderDialog({
                   </label>
                   <select
                     id={`line-service-${line.key}`}
-                    value={line.service}
+                    value={serviceIdOf(line)}
                     onChange={(event) =>
-                      updateLine(line.key, { service: event.target.value })
+                      updateLine(line.key, { serviceId: event.target.value })
                     }
                     className={`${fieldClass} bg-white`}
                   >
-                    {SERVICES.map((service) => (
-                      <option key={service}>{service}</option>
+                    {!serviceFor(line) && (
+                      <option value="">{serviceList.isLoading ? 'Loading services…' : 'Choose a service'}</option>
+                    )}
+                    {services.map(({ uuid, name }) => (
+                      <option key={uuid} value={uuid}>
+                        {name}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <p className="pb-2 text-right text-xs text-muted tabular-nums">
-                  {formatXaf(getUnitPrice(line))} each
+                  {formatXaf(getUnitPrice(line))} / {priceUnit(line)}
                   <span className="block font-bold text-ink">
                     {formatXaf((Number(line.qty) || 0) * getUnitPrice(line))}
                   </span>
@@ -513,14 +587,14 @@ function NewOrderDialog({
               Add Item
             </button>
             <span className="text-[11px] text-muted">Quick add:</span>
-            {SERVICES.map((service) => (
+            {services.slice(0, 4).map(({ uuid, name }) => (
               <button
-                key={service}
+                key={uuid}
                 type="button"
-                onClick={() => addLine(service)}
+                onClick={() => addLine(uuid)}
                 className={`${secondaryButton} h-8`}
               >
-                {service}
+                {name}
               </button>
             ))}
           </div>
@@ -529,6 +603,34 @@ function NewOrderDialog({
 
       {step === 2 && (
         <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label htmlFor="order-branch" className={labelClass}>
+              Branch
+            </label>
+            <select
+              id="order-branch"
+              value={branchId}
+              disabled={branchList.isLoading}
+              onChange={(event) => setChosenBranch(event.target.value)}
+              className={`${fieldClass} disabled:opacity-60`}
+            >
+              {branchList.isLoading && <option value="">Loading branches…</option>}
+              {!branchList.isLoading && branches.length === 0 && <option value="">No branches</option>}
+              {branches.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            {branchList.isError && (
+              <p role="alert" className="mt-1 text-[11px] font-semibold text-danger">
+                Couldn’t load your branches.{' '}
+                <button type="button" onClick={() => void branchList.refetch()} className="text-brand hover:underline">
+                  Retry
+                </button>
+              </p>
+            )}
+          </div>
           <label className="flex cursor-pointer items-center gap-2.5 rounded-lg bg-field p-3 text-xs font-semibold text-ink sm:col-span-2">
             <input
               type="checkbox"
@@ -725,7 +827,7 @@ function NewOrderDialog({
                 <li key={line.key} className="flex justify-between gap-4">
                   <span>
                     {line.name} × {line.qty}
-                    <span className="text-muted"> · {line.service}</span>
+                    <span className="text-muted"> · {serviceFor(line)?.name}</span>
                   </span>
                   <span className="tabular-nums">
                     {formatXaf(Number(line.qty) * getUnitPrice(line))}

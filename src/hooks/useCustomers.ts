@@ -1,43 +1,102 @@
-import { useSyncExternalStore } from 'react'
-import { SAMPLE_CUSTOMERS } from '../constants/sampleCustomers'
+import { useCallback, useMemo } from 'react'
+import { useGetBranchDropdownQuery } from '../services/branchApi'
+import { customerApi, useListCustomersQuery, useUpdateCustomerMutation } from '../services/customerApi'
+import type { CustomerListParams } from '../services/customerApi'
+import { useAppDispatch } from '../store/hooks'
 import type { CrmCustomer } from '../types/customer'
+import { changedCustomerFields, customerRequest } from '../utils/customers'
 
-// In-memory customer store shared by the list and profile pages.
-// TODO: replace with the customers API; changes are lost on reload.
-let customers = SAMPLE_CUSTOMERS
-const listeners = new Set<() => void>()
+// One shared argument so every page reads the same cached list
+// TODO: page through the list once there are more customers than this
+const ALL_CUSTOMERS: CustomerListParams = { page: 0, size: 500 }
+const NO_CUSTOMERS: CrmCustomer[] = []
 
-function setCustomers(next: CrmCustomer[]) {
-  customers = next
-  listeners.forEach((listener) => listener())
+// Branch name <-> uuid, from GET /branch/dropdown. Customers are shown and
+// picked by branch name; the API wants the uuid.
+export function useBranchLookup() {
+  const { data } = useGetBranchDropdownQuery()
+  return useMemo(() => {
+    const options = data ?? []
+    return {
+      uuidOf: (name: string) => options.find((option) => option.name === name)?.uuid ?? '',
+      nameOf: (uuid: string) => options.find((option) => option.uuid === uuid)?.name ?? '',
+    }
+  }, [data])
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-export const customerStore = {
-  add(added: CrmCustomer[]) {
-    setCustomers([...added, ...customers])
-  },
-  update(ids: string[], change: (customer: CrmCustomer) => CrmCustomer) {
-    setCustomers(
-      customers.map((customer) =>
-        ids.includes(customer.id) ? change(customer) : customer,
+// The customer list with its loading / error state; branch names are filled
+// in when the response only had branch uuids
+export function useCustomersQuery() {
+  const query = useListCustomersQuery(ALL_CUSTOMERS)
+  const { nameOf } = useBranchLookup()
+  const items = useMemo(
+    () =>
+      (query.data?.items ?? NO_CUSTOMERS).map((customer) =>
+        customer.branch || !customer.branchId ? customer : { ...customer, branch: nameOf(customer.branchId) },
       ),
-    )
-  },
-  nextId() {
-    const highest = Math.max(
-      ...customers.map(({ id }) => Number(id.replace(/\D/g, ''))),
-    )
-    return `CUS-${String(highest + 1).padStart(6, '0')}`
-  },
+    [query.data, nameOf],
+  )
+  return { ...query, items }
 }
 
+// Applies a change to customers: shown at once, and the CustomerRequest fields
+// it touches (name, phone, email, address, points, branch, referral source)
+// are sent as a PATCH per customer. Resolves to how many the server refused;
+// those are undone.
+// Status, tags, notes, preferences and payments have no backend fields, so
+// changes to them only live in the cached list and are lost when it reloads.
+// TODO: send those too once the backend stores them
+export function useChangeCustomers() {
+  const dispatch = useAppDispatch()
+  const [updateCustomer] = useUpdateCustomerMutation()
+  const { uuidOf } = useBranchLookup()
+  return useCallback(
+    async (customers: CrmCustomer[], apply: (customer: CrmCustomer) => CrmCustomer) => {
+      const ids = customers.map(({ id }) => id)
+      const patchCaches = (change: (customer: CrmCustomer) => CrmCustomer, only: string[]) => {
+        const inList = dispatch(
+          customerApi.util.updateQueryData('listCustomers', ALL_CUSTOMERS, (page) => {
+            page.items = page.items.map((current) => (only.includes(current.id) ? change(current) : current))
+          }),
+        )
+        const singles = only.map((id) =>
+          dispatch(
+            customerApi.util.updateQueryData('getCustomer', id, (current) => (current ? change(current) : current)),
+          ),
+        )
+        return () => {
+          inList.undo()
+          singles.forEach((single) => single.undo())
+        }
+      }
+      patchCaches(apply, ids)
+
+      let refused = 0
+      for (const customer of customers) {
+        const next = apply(customer)
+        const branchOf = (current: CrmCustomer) => uuidOf(current.branch) || current.branchId
+        const changes = changedCustomerFields(
+          customerRequest(customer, branchOf(customer)),
+          customerRequest(next, branchOf(next)),
+        )
+        if (Object.keys(changes).length === 0) continue
+        try {
+          await updateCustomer({ id: customer.id, changes }).unwrap()
+        } catch {
+          refused += 1
+          // Put this customer back as it was
+          patchCaches(() => customer, [customer.id])
+        }
+      }
+      return refused
+    },
+    [dispatch, updateCustomer, uuidOf],
+  )
+}
+
+// Just the customers; empty until the list answers
 function useCustomers() {
-  return useSyncExternalStore(subscribe, () => customers)
+  return useCustomersQuery().items
 }
 
 export default useCustomers

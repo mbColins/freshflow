@@ -13,8 +13,10 @@ export type LeaveStatus = 'Pending' | 'Approved' | 'Rejected'
 export type StaffSkill = { name: string; level: SkillLevel }
 
 export type StaffMember = {
-  // Employee ID, e.g. EMP-0024
+  // Employee ID, e.g. EMP-0024; the user's uuid for staff from the users API
   id: string
+  // Sign-in name, for staff from the users API (shown instead of the uuid)
+  username?: string
   name: string
   jobTitle: string
   department: string

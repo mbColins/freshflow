@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ExternalLink, ReceiptText, RotateCcw, ShieldAlert, Undo2 } from 'lucide-react'
 import type { PaymentPermissions } from '../../constants/payments'
@@ -7,9 +6,10 @@ import { formatDate } from '../../utils/customers'
 import { formatClock } from '../../utils/logistics'
 import { formatXaf } from '../../utils/orders'
 import { getRefundable } from '../../utils/payments'
-import { secondaryButton, sectionTitle } from '../orders/styles'
+import { secondaryButton } from '../orders/styles'
 import Modal from '../ui/Modal'
 import { MethodLabel, TxnStatusBadge } from './PaymentsTable'
+import { DetailBox, DrawerSection } from '../ui/Details'
 
 type PaymentDrawerProps = {
   txn: Transaction | null
@@ -18,28 +18,6 @@ type PaymentDrawerProps = {
   onReceipt: (id: string) => void
   onRefund: (id: string) => void
   onReverse: (id: string) => void
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className={sectionTitle}>{title}</h3>
-      <div className="mt-2">{children}</div>
-    </section>
-  )
-}
-
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-field p-3 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
 }
 
 function PaymentDrawer({
@@ -110,8 +88,8 @@ function PaymentDrawer({
             </p>
           )}
 
-          <Section title="Payment information">
-            <Rows
+          <DrawerSection title="Payment information">
+            <DetailBox
               rows={[
                 ['Amount', formatXaf(txn.amount)],
                 ['Payment method', <MethodLabel txn={{ method: txn.method, provider: '' }} />],
@@ -121,10 +99,10 @@ function PaymentDrawer({
                 ['Time', formatClock(txn.at)],
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Customer & order">
-            <Rows
+          <DrawerSection title="Customer & order">
+            <DetailBox
               rows={[
                 ['Customer', txn.customer],
                 ['Phone', txn.phone],
@@ -132,11 +110,11 @@ function PaymentDrawer({
                 ['Branch', txn.branch],
               ]}
             />
-          </Section>
+          </DrawerSection>
 
           {txn.provider && (
-            <Section title="Payment provider">
-              <Rows
+            <DrawerSection title="Payment provider">
+              <DetailBox
                 rows={[
                   ['Provider', txn.provider],
                   ['Provider reference', <span className="font-mono">{txn.reference}</span>],
@@ -151,19 +129,19 @@ function PaymentDrawer({
                   ['Reconciliation', txn.reconciled ? 'Matched' : 'Not matched yet'],
                 ]}
               />
-            </Section>
+            </DrawerSection>
           )}
 
-          <Section title="Recorded by">
-            <Rows
+          <DrawerSection title="Recorded by">
+            <DetailBox
               rows={[
                 ['Staff member', txn.cashier],
                 ['Register', txn.method === 'Cash' ? 'Drawer #01 · Front Desk' : 'Front desk terminal'],
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Timeline">
+          <DrawerSection title="Timeline">
             <ol className="space-y-3 border-l border-line pl-4">
               {txn.timeline.map((entry, index) => (
                 <li key={entry.at + index} className="relative text-xs">
@@ -173,7 +151,7 @@ function PaymentDrawer({
                 </li>
               ))}
             </ol>
-          </Section>
+          </DrawerSection>
         </div>
       )}
     </Modal>

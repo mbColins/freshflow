@@ -278,9 +278,10 @@ export type BranchListActions = {
   period: BranchPeriod
   onEdit: (id: string) => void
   onSetActive: (id: string, active: boolean) => void
+  onDelete: (id: string) => void
 }
 
-function BranchMenu({ branch, permissions, onSetActive }: { branch: Branch } & BranchListActions) {
+function BranchMenu({ branch, permissions, onSetActive, onDelete }: { branch: Branch } & BranchListActions) {
   const navigate = useNavigate()
   const open = (tab: string) => navigate(`/branches/${branch.id}?tab=${tab}`)
   const links: [string, string][] = [
@@ -325,6 +326,17 @@ function BranchMenu({ branch, permissions, onSetActive }: { branch: Branch } & B
                 Deactivate branch
               </MenuItem>
             ))}
+          {permissions.manage && (
+            <MenuItem
+              destructive
+              onSelect={() => {
+                close()
+                onDelete(branch.id)
+              }}
+            >
+              Delete branch
+            </MenuItem>
+          )}
         </>
       )}
     </Menu>

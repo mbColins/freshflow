@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import { Download, Ellipsis, GitCompareArrows, LayoutGrid, Plus, Table2, Upload } from 'lucide-react'
+import { Download, Ellipsis, GitCompareArrows, LayoutGrid, Plus, RotateCcw, Table2, Upload } from 'lucide-react'
 import {
   BranchGrid,
   BranchKpis,
@@ -17,23 +17,28 @@ import { fieldClass, primaryButton, secondaryButton } from '../components/orders
 import Menu, { MenuItem } from '../components/ui/Menu'
 import { BRANCH_PERMISSIONS, EMPTY_BRANCH_FILTERS } from '../constants/branches'
 import { ORDER_ROLES } from '../constants/orders'
-import useBranches, { branchStore } from '../hooks/useBranches'
+import { useBranchesQuery, useChangeBranch } from '../hooks/useBranches'
 import useLocalStorage from '../hooks/useLocalStorage'
-import type { BranchFilters, BranchProfile } from '../types/branch'
+import useDeleteBranch from '../hooks/useDeleteBranch'
+import useSaveBranch from '../hooks/useSaveBranch'
+import { useCreateBranchMutation } from '../services/branchApi'
+import type { Branch, BranchFilters, BranchProfile } from '../types/branch'
 import type { OrderRole } from '../types/order'
+import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../utils/apiErrors'
 import {
   branchesToCsv,
   compareBranches,
-  createBranch,
   emptyProfile,
   importBranches,
   matchesBranchFilters,
   nextBranchCode,
+  profileOf,
 } from '../utils/branches'
 import type { BranchSortKey } from '../utils/branches'
 import { downloadFile } from '../utils/orders'
 
 const TOAST_MS = 4000
+const NO_BRANCHES: Branch[] = []
 const IMPORT_TEMPLATE =
   'name,code,city,district,address,phone,email,manager\r\nDeido Branch,,Douala,Deido,24 Rue Deido,+237 6XX XXX XXX,deido@example.com,Full Name\r\n'
 
@@ -41,13 +46,18 @@ type WizardState = { mode: 'create' } | { mode: 'edit'; id: string }
 type BranchView = 'grid' | 'table'
 
 function BranchesPage() {
-  const branches = useBranches()
+  const { data, isLoading, isError, isFetching, error: loadError, refetch } = useBranchesQuery()
+  const branches = data?.items ?? NO_BRANCHES
+  const changeBranch = useChangeBranch()
+  const [createBranch] = useCreateBranchMutation()
+  const confirmDelete = useDeleteBranch()
   const [filters, setFilters] = useState<BranchFilters>(EMPTY_BRANCH_FILTERS)
   const [sort, setSort] = useState<BranchSort>({ key: 'name', descending: false })
   const [wizard, setWizard] = useState<WizardState | null>(null)
   const [comparing, setComparing] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const { save: saveBranch, error: saveError, reset: resetSave } = useSaveBranch()
   const [role, setRole] = useLocalStorage<OrderRole>('branches.role', 'admin')
   const [view, setView] = useLocalStorage<BranchView>('branches.view', 'grid')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -87,22 +97,19 @@ function BranchesPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  function handleSave(profile: BranchProfile) {
-    if (wizard?.mode === 'edit') {
-      branchStore.update(wizard.id, (branch) => ({ ...branch, ...profile }))
-      setToast(`${profile.name} updated`)
-    } else {
-      branchStore.add([createBranch(profile, branches.length + 1)])
-      setToast(`${profile.name} created as ${profile.id}`)
-    }
+  async function handleSave(profile: BranchProfile, logo: File | null) {
+    // The list reloads on its own; on failure the wizard stays open with the error
+    if (!(await saveBranch(editing, profile, logo))) return
+    setToast(editing ? `${profile.name} updated` : `${profile.name} created as ${profile.id}`)
     setWizard(null)
   }
 
   function handleSetActive(id: string, active: boolean) {
     const branch = branches.find((item) => item.id === id)!
     if (active) {
-      branchStore.update(id, (current) => ({ ...current, status: 'active', statusNote: '' }))
-      setToast(`${branch.name} activated`)
+      void changeBranch(branch, (current) => ({ ...current, status: 'active', statusNote: '' })).then((ok) =>
+        setToast(ok ? `${branch.name} activated` : `Couldn’t activate ${branch.name}. Try again.`),
+      )
       return
     }
     setConfirm({
@@ -110,9 +117,9 @@ function BranchesPage() {
       body: `The branch stops accepting new orders and disappears from branch pickers. ${branch.stats.activeOrders} active orders stay open until completed, and all history is kept.`,
       confirmLabel: 'Deactivate',
       destructive: true,
-      onConfirm: () => {
-        branchStore.update(id, (current) => ({ ...current, status: 'inactive' }))
-        setToast(`${branch.name} deactivated`)
+      onConfirm: async () => {
+        const ok = await changeBranch(branch, (current) => ({ ...current, status: 'inactive' }))
+        setToast(ok ? `${branch.name} deactivated` : `Couldn’t deactivate ${branch.name}. Try again.`)
       },
     })
   }
@@ -135,10 +142,21 @@ function BranchesPage() {
       setToast('Import failed: the file needs a header row with a “name” column')
       return
     }
-    if (added.length > 0) branchStore.add(added)
+    // One POST per row, in order, so codes are claimed predictably
+    let created = 0
+    for (const branch of added) {
+      try {
+        await createBranch({ profile: profileOf(branch), logo: null }).unwrap()
+        created += 1
+      } catch {
+        // Counted below as refused
+      }
+    }
+    const refused = added.length - created
     setToast(
-      `Imported ${added.length} ${added.length === 1 ? 'branch' : 'branches'} as inactive` +
-        (skipped ? `, skipped ${skipped} (no name or duplicate code)` : ''),
+      `Imported ${created} ${created === 1 ? 'branch' : 'branches'} as inactive` +
+        (skipped ? `, skipped ${skipped} (no name or duplicate code)` : '') +
+        (refused ? `, ${refused} refused by the server` : ''),
     )
   }
 
@@ -147,6 +165,10 @@ function BranchesPage() {
     period: filters.period,
     onEdit: (id: string) => setWizard({ mode: 'edit', id }),
     onSetActive: handleSetActive,
+    onDelete: (id: string) => {
+      const branch = branches.find((item) => item.id === id)
+      if (branch) setConfirm(confirmDelete(branch, (message) => setToast(message)))
+    },
   }
 
   return (
@@ -272,7 +294,37 @@ function BranchesPage() {
         />
       </section>
 
-      {filtered.length === 0 ? (
+      {isLoading ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-busy="true">
+          <p className="sr-only" role="status">Loading branches…</p>
+          {[0, 1, 2].map((key) => (
+            <div key={key} className="h-56 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+          ))}
+        </div>
+      ) : isError && branches.length === 0 ? (
+        <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">Couldn’t load the branches</h2>
+          <p className="max-w-md text-xs text-muted">
+            {serverMessage(loadError) ??
+              (errorMessage(loadError, 'The server refused the request.') ?? NETWORK_ERROR_MESSAGE)}
+          </p>
+          <button type="button" onClick={() => void refetch()} disabled={isFetching} className={`${secondaryButton} mt-2`}>
+            <RotateCcw className="size-3.5" aria-hidden="true" />
+            {isFetching ? 'Retrying…' : 'Try Again'}
+          </button>
+        </div>
+      ) : branches.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">No branches yet</h2>
+          <p className="text-xs text-muted">Branches you add or import appear here.</p>
+          {permissions.manage && (
+            <button type="button" onClick={() => setWizard({ mode: 'create' })} className={`${secondaryButton} mt-2`}>
+              <Plus className="size-3.5" aria-hidden="true" />
+              Add Branch
+            </button>
+          )}
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
           <h2 className="text-sm font-bold text-ink">No branches match these filters</h2>
           <p className="text-xs text-muted">Try a different search, status, city or performance level.</p>
@@ -312,7 +364,11 @@ function BranchesPage() {
           mode={wizard.mode}
           initial={editing ?? emptyProfile(nextBranchCode(branches))}
           takenCodes={branches.map(({ id }) => id).filter((id) => id !== editing?.id)}
-          onClose={() => setWizard(null)}
+          error={saveError}
+          onClose={() => {
+            resetSave()
+            setWizard(null)
+          }}
           onSave={handleSave}
         />
       )}

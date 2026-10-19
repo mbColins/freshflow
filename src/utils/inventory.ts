@@ -9,6 +9,7 @@ import type {
   PurchaseOrder,
   StockStatus,
 } from '../types/inventory'
+import { toCsv } from './csv'
 
 const DAY_MS = 86_400_000
 
@@ -115,10 +116,5 @@ export function itemsToCsv(items: InventoryItem[], now: number, includeCosts: bo
       ['Stock value (XAF)', getValue],
     )
   }
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...items.map((item) => columns.map(([, read]) => escape(read(item))).join(',')),
-  ].join('\r\n')
+  return toCsv(columns, items)
 }

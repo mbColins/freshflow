@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { MAX_COMPARE, MIN_COMPARE } from '../../constants/branches'
 import type { BranchPermissions } from '../../constants/branches'
@@ -156,8 +157,10 @@ export function QuickAddDialog({
   onClose: () => void
   onSubmit: (name: string, kind: string) => void
 }) {
-  const [name, setName] = useState('')
-  const [kind, setKind] = useState(kinds[0])
+  const { register, handleSubmit, control } = useForm<{ name: string; kind: string }>({
+    defaultValues: { name: '', kind: kinds[0] },
+  })
+  const name = useWatch({ control, name: 'name' })
   return (
     <Modal
       open
@@ -178,10 +181,7 @@ export function QuickAddDialog({
       <form
         id="quick-add"
         className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit(name.trim(), kind)
-        }}
+        onSubmit={handleSubmit((values) => onSubmit(values.name.trim(), values.kind))}
       >
         <div>
           <label htmlFor="quick-name" className={labelClass}>{nameLabel}</label>
@@ -189,14 +189,13 @@ export function QuickAddDialog({
             id="quick-name"
             autoComplete="off"
             placeholder={namePlaceholder}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
+            {...register('name', { validate: (value) => value.trim() !== '' })}
             className={fieldClass}
           />
         </div>
         <div>
           <label htmlFor="quick-kind" className={labelClass}>{kindLabel}</label>
-          <select id="quick-kind" value={kind} onChange={(event) => setKind(event.target.value)} className={fieldClass}>
+          <select id="quick-kind" {...register('kind')} className={fieldClass}>
             {kinds.map((option) => (
               <option key={option}>{option}</option>
             ))}

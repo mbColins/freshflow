@@ -8,6 +8,7 @@ import {
   STATUS_LABELS,
   ZONES,
 } from '../constants/logistics'
+import { toCsv } from './csv'
 import type {
   DispatchJob,
   JobPriority,
@@ -162,10 +163,5 @@ export function jobsToCsv(
     ['Payment', (job) => job.payment],
     ['Status', getJobStatusLabel],
   ]
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...jobs.map((job) => columns.map(([, read]) => escape(read(job))).join(',')),
-  ].join('\r\n')
+  return toCsv(columns, jobs)
 }

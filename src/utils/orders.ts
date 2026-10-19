@@ -11,6 +11,7 @@ import type {
   PaymentStatus,
 } from '../types/order'
 import { getSettings } from '../hooks/useSettings'
+import { toCsv } from './csv'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
@@ -269,14 +270,7 @@ export function ordersToCsv(
       ['Payment', getPaymentStatus],
     )
   }
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...orders.map((order) =>
-      columns.map(([, read]) => escape(read(order))).join(','),
-    ),
-  ].join('\r\n')
+  return toCsv(columns, orders)
 }
 
 export function downloadFile(name: string, content: string, type: string) {

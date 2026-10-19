@@ -8,7 +8,8 @@ import {
   LOYALTY_TIERS,
   SEGMENTS,
 } from '../../constants/customers'
-import { BRANCHES, SERVICES } from '../../constants/orders'
+import { SERVICES } from '../../constants/orders'
+import useBranchNames from '../../hooks/useBranchNames'
 import type {
   CrmCustomer,
   CustomSegment,
@@ -16,6 +17,7 @@ import type {
 } from '../../types/customer'
 import { countCustomerFilters, formatLastOrder } from '../../utils/customers'
 import { formatXaf } from '../../utils/orders'
+import InlineNameForm from '../ui/InlineNameForm'
 import {
   fieldClass,
   primaryButton,
@@ -51,7 +53,8 @@ const SELECTS: Record<
   branch: {
     label: 'Branch',
     all: 'All branches',
-    options: BRANCHES.map((branch) => ({ value: branch, label: branch })),
+    // The connected user's branches, filled in by FilterSelect
+    options: [],
   },
   tier: {
     label: 'Loyalty tier',
@@ -115,7 +118,10 @@ function FilterSelect({
   onChange,
   className = '',
 }: FilterProps & { name: SelectKey; className?: string }) {
-  const { label, all, options } = SELECTS[name]
+  const { label, all, options: fixed } = SELECTS[name]
+  const branchNames = useBranchNames()
+  const options =
+    name === 'branch' ? branchNames.names.map((branch) => ({ value: branch, label: branch })) : fixed
   return (
     <select
       aria-label={label}
@@ -263,7 +269,6 @@ function CustomersToolbar({
   canCreateOrder,
 }: CustomersToolbarProps) {
   const [searchFocused, setSearchFocused] = useState(false)
-  const [segmentName, setSegmentName] = useState('')
   const activeCount = countCustomerFilters(filters)
   const showResults = searchFocused && filters.query.trim() !== ''
 
@@ -450,32 +455,16 @@ function CustomersToolbar({
           disabled={activeCount === 0}
         >
           {(close) => (
-            <form
-              className="flex w-64 gap-1 p-1"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (!segmentName.trim()) return
-                onSaveSegment(segmentName.trim())
-                setSegmentName('')
+            <InlineNameForm
+              autoFocus
+              label="Segment name"
+              placeholder="Name these filters…"
+              className="w-64 p-1"
+              onSave={(name) => {
+                onSaveSegment(name)
                 close()
               }}
-            >
-              <input
-                autoFocus
-                aria-label="Segment name"
-                placeholder="Name these filters…"
-                value={segmentName}
-                onChange={(event) => setSegmentName(event.target.value)}
-                className={`${fieldClass} h-8`}
-              />
-              <button
-                type="submit"
-                disabled={!segmentName.trim()}
-                className={`${primaryButton} h-8`}
-              >
-                Save
-              </button>
-            </form>
+            />
           )}
         </Menu>
       </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { ArrowDown, ArrowUp, Sparkles, X } from 'lucide-react'
 import { DEPOT, PRIORITIES, ZONES } from '../../constants/logistics'
 import type {
@@ -26,12 +26,7 @@ import {
 } from '../orders/styles'
 import Modal from '../ui/Modal'
 import { JobPriorityBadge, JobTypeIcon } from './LogisticsBits'
-
-function toLocalInput(time: number) {
-  const date = new Date(time)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
+import { toLocalInput } from '../../utils/dates'
 
 const assignable = (driver: Driver) => driver.status !== 'offline'
 
@@ -164,6 +159,14 @@ export type NewJobInput = {
   instructions: string
 }
 
+// Form state: the date stays in datetime-local format until submit
+type ScheduleValues = Omit<NewJobInput, 'scheduledAt' | 'driverId'> & {
+  when: string
+  driverId: string
+}
+
+type TextField = 'orderId' | 'customer' | 'phone' | 'address' | 'manifest' | 'instructions'
+
 export function ScheduleDialog({
   drivers,
   onClose,
@@ -173,42 +176,50 @@ export function ScheduleDialog({
   onClose: () => void
   onCreate: (input: NewJobInput) => void
 }) {
-  const [type, setType] = useState<JobType>('pickup')
-  const [orderId, setOrderId] = useState('')
-  const [customer, setCustomer] = useState('')
-  const [phone, setPhone] = useState('')
-  const [address, setAddress] = useState('')
-  const [zone, setZone] = useState(ZONES[0].name)
-  const [manifest, setManifest] = useState('')
-  const [priority, setPriority] = useState<JobPriority>('standard')
-  const [when, setWhen] = useState(() => toLocalInput(Date.now() + 2 * 3_600_000))
-  const [driverId, setDriverId] = useState('')
-  const [instructions, setInstructions] = useState('')
+  // Lazy so the default time is read once, not on every render
+  const [defaultWhen] = useState(() => toLocalInput(Date.now() + 2 * 3_600_000))
+  const { register, handleSubmit, control } = useForm<ScheduleValues>({
+    defaultValues: {
+      type: 'pickup',
+      orderId: '',
+      customer: '',
+      phone: '',
+      address: '',
+      zone: ZONES[0].name,
+      manifest: '',
+      priority: 'standard',
+      when: defaultWhen,
+      driverId: '',
+      instructions: '',
+    },
+  })
+  const [type, customer, phone, address, zone, priority, when] = useWatch({
+    control,
+    name: ['type', 'customer', 'phone', 'address', 'zone', 'priority', 'when'],
+  })
   const valid = customer.trim() !== '' && phone.trim() !== '' && address.trim() !== '' && when !== ''
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function onSubmit(values: ScheduleValues) {
     if (!valid) return
     onCreate({
-      type,
-      orderId: orderId.trim().toUpperCase(),
-      customer: customer.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      zone,
-      manifest: manifest.trim(),
-      priority,
-      scheduledAt: new Date(when).toISOString(),
-      driverId: driverId || null,
-      instructions: instructions.trim(),
+      type: values.type,
+      orderId: values.orderId.trim().toUpperCase(),
+      customer: values.customer.trim(),
+      phone: values.phone.trim(),
+      address: values.address.trim(),
+      zone: values.zone,
+      manifest: values.manifest.trim(),
+      priority: values.priority,
+      scheduledAt: new Date(values.when).toISOString(),
+      driverId: values.driverId || null,
+      instructions: values.instructions.trim(),
     })
   }
 
   const text = (
     id: string,
     label: string,
-    value: string,
-    onChange: (value: string) => void,
+    name: TextField,
     options: { wide?: boolean; placeholder?: string; type?: string } = {},
   ) => (
     <div className={options.wide ? 'sm:col-span-2' : ''}>
@@ -220,8 +231,7 @@ export function ScheduleDialog({
         type={options.type ?? 'text'}
         autoComplete="off"
         placeholder={options.placeholder}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+        {...register(name)}
         className={fieldClass}
       />
     </div>
@@ -255,40 +265,30 @@ export function ScheduleDialog({
         </>
       }
     >
-      <form id="schedule-job" onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
+      <form id="schedule-job" onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
         <div>
           <label htmlFor="job-type" className={labelClass}>
             Type
           </label>
-          <select
-            id="job-type"
-            value={type}
-            onChange={(event) => setType(event.target.value as JobType)}
-            className={fieldClass}
-          >
+          <select id="job-type" {...register('type')} className={fieldClass}>
             <option value="pickup">Pickup (collect from customer)</option>
             <option value="delivery">Delivery (return to customer)</option>
           </select>
         </div>
-        {text('job-order', 'Order number (optional)', orderId, setOrderId, {
+        {text('job-order', 'Order number (optional)', 'orderId', {
           placeholder: 'e.g. ORD-10452',
         })}
-        {text('job-customer', 'Customer', customer, setCustomer)}
-        {text('job-phone', 'Phone', phone, setPhone, {
+        {text('job-customer', 'Customer', 'customer')}
+        {text('job-phone', 'Phone', 'phone', {
           type: 'tel',
           placeholder: '+237 6XX XXX XXX',
         })}
-        {text('job-address', 'Address', address, setAddress, { wide: true })}
+        {text('job-address', 'Address', 'address', { wide: true })}
         <div>
           <label htmlFor="job-zone" className={labelClass}>
             Delivery zone
           </label>
-          <select
-            id="job-zone"
-            value={zone}
-            onChange={(event) => setZone(event.target.value)}
-            className={fieldClass}
-          >
+          <select id="job-zone" {...register('zone')} className={fieldClass}>
             {ZONES.map(({ name, fee }) => (
               <option key={name} value={name}>
                 {name} ({formatXaf(fee)})
@@ -303,8 +303,7 @@ export function ScheduleDialog({
           <input
             id="job-when"
             type="datetime-local"
-            value={when}
-            onChange={(event) => setWhen(event.target.value)}
+            {...register('when')}
             className={fieldClass}
           />
         </div>
@@ -312,12 +311,7 @@ export function ScheduleDialog({
           <label htmlFor="job-priority" className={labelClass}>
             Priority
           </label>
-          <select
-            id="job-priority"
-            value={priority}
-            onChange={(event) => setPriority(event.target.value as JobPriority)}
-            className={fieldClass}
-          >
+          <select id="job-priority" {...register('priority')} className={fieldClass}>
             {PRIORITIES.map(({ id, label }) => (
               <option key={id} value={id}>
                 {label}
@@ -329,12 +323,7 @@ export function ScheduleDialog({
           <label htmlFor="job-driver" className={labelClass}>
             Driver (optional)
           </label>
-          <select
-            id="job-driver"
-            value={driverId}
-            onChange={(event) => setDriverId(event.target.value)}
-            className={fieldClass}
-          >
+          <select id="job-driver" {...register('driverId')} className={fieldClass}>
             <option value="">Assign later</option>
             {drivers.filter(assignable).map(({ id, name }) => (
               <option key={id} value={id}>
@@ -343,11 +332,11 @@ export function ScheduleDialog({
             ))}
           </select>
         </div>
-        {text('job-manifest', 'Items / bags', manifest, setManifest, {
+        {text('job-manifest', 'Items / bags', 'manifest', {
           wide: true,
           placeholder: 'e.g. 2 bags, wash & fold',
         })}
-        {text('job-instructions', 'Customer instructions', instructions, setInstructions, {
+        {text('job-instructions', 'Customer instructions', 'instructions', {
           wide: true,
           placeholder: 'e.g. Call before arrival',
         })}

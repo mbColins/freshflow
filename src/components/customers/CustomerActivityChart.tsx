@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { formatXaf } from '../../utils/orders'
 import SegmentedControl from '../ui/SegmentedControl'
+import { formatCompact, getTickStep } from '../../utils/charts'
 
 const RANGES = [
   { value: '6', label: 'Last 6 months' },
@@ -18,19 +19,6 @@ const PLOT_HEIGHT = HEIGHT - MARGIN.top - MARGIN.bottom
 const BASELINE = MARGIN.top + PLOT_HEIGHT
 const BAR_WIDTH = 24
 const BAR_COLOR = '#2563eb'
-
-function formatCompact(value: number) {
-  if (value >= 1_000_000) return `${value / 1_000_000}M`
-  if (value >= 1_000) return `${value / 1_000}K`
-  return String(value)
-}
-
-function getTickStep(max: number) {
-  const rough = Math.max(max, 1) / 4
-  const magnitude = 10 ** Math.floor(Math.log10(rough))
-  const multiple = [1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough)!
-  return Math.max(1, multiple * magnitude)
-}
 
 function roundedTopBar(x: number, top: number) {
   const right = x + BAR_WIDTH

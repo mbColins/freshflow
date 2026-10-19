@@ -11,7 +11,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { BRANCHES } from '../../constants/orders'
 import {
   ADD_ONS,
   MACHINE_TYPES,
@@ -28,7 +27,10 @@ import type {
   PricingModel,
   ServiceVisibility,
 } from '../../types/service'
+import { useGetBranchDropdownQuery } from '../../services/branchApi'
+import type { BranchSetting } from '../../types/service'
 import { formatXaf } from '../../utils/orders'
+import { formatDays, formatHours, parseDays, parseHours, WEEK_DAYS } from '../../utils/serviceMapping'
 import { formatPrice, generateCode } from '../../utils/services'
 import {
   fieldClass,
@@ -38,8 +40,10 @@ import {
   secondaryButton,
   sectionTitle,
 } from '../orders/styles'
+import FormAlert from '../ui/FormAlert'
 import Modal from '../ui/Modal'
 import { ServiceIcon, WorkflowChain } from './ServiceBits'
+import FormField from '../ui/FormField'
 
 const STEPS = [
   'Basic',
@@ -73,11 +77,8 @@ function createBlankService(category: string): LaundryService {
     consumption: [],
     addOnIds: [],
     options: [],
-    branches: BRANCHES.map((branch) => ({
-      branch,
-      available: true,
-      priceOverride: null,
-    })),
+    // Filled from the connected tenant's branches (see `branchRows`)
+    branches: [],
     visibility: 'visible',
     availableDays: 'Monday–Saturday',
     availableHours: '08:00–18:00',
@@ -109,27 +110,6 @@ function toggle<T>(list: T[], value: T) {
     : [...list, value]
 }
 
-function Field({
-  label,
-  htmlFor,
-  wide = false,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  wide?: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
 const checkRowClass =
   'flex cursor-pointer items-center gap-2 rounded-md bg-field px-3 py-2 text-xs font-medium text-ink'
 
@@ -139,9 +119,11 @@ type ServiceWizardProps = {
   initialStep?: number
   categories: string[]
   existing: LaundryService[]
+  // The server's reasons the last save failed, shown above the steps
+  error?: string | null
   onClose: () => void
-  // publish=false saves as draft
-  onSave: (service: LaundryService, publish: boolean) => void
+  // publish=false saves as draft. The wizard stays busy until it resolves
+  onSave: (service: LaundryService, publish: boolean) => void | Promise<void>
 }
 
 function ServiceWizard({
@@ -149,10 +131,12 @@ function ServiceWizard({
   initialStep = 0,
   categories,
   existing,
+  error,
   onClose,
   onSave,
 }: ServiceWizardProps) {
   const [step, setStep] = useState(initialStep)
+  const [saving, setSaving] = useState(false)
   const [draft, setDraft] = useState<LaundryService>(
     () => service ?? createBlankService(categories[0]),
   )
@@ -162,6 +146,22 @@ function ServiceWizard({
 
   const patch = (change: Partial<LaundryService>) =>
     setDraft((current) => ({ ...current, ...change }))
+  // The branches that can offer the service: the connected user's own, as
+  // scoped by GET /branch/dropdown. A branch keeps its earlier setting (matched
+  // by uuid, or by name for older data); a new one starts offered at the
+  // global price.
+  const branchList = useGetBranchDropdownQuery()
+  const branchRows: BranchSetting[] = (branchList.data ?? []).map(({ uuid, name }) => {
+    const saved = draft.branches.find(
+      ({ branchId, branch }) => branchId === uuid || (!branchId && branch === name),
+    )
+    return {
+      branch: name,
+      branchId: uuid,
+      available: saved?.available ?? true,
+      priceOverride: saved?.priceOverride ?? null,
+    }
+  })
   const code =
     codeEdited || !draft.name.trim() ? draft.id : generateCode(draft.name, existing)
   const numeric = (value: string) => Math.max(0, Number(value) || 0)
@@ -171,9 +171,15 @@ function ServiceWizard({
     (stage) => !draft.workflow.includes(stage),
   )
 
+  const days = parseDays(draft.availableDays) ?? []
+  const hours = parseHours(draft.availableHours) ?? { open: '08:00', close: '18:00' }
+
   const problems = [
     !draft.name.trim() && 'Service name is required (Basic).',
     !code.trim() && 'Service code is required (Basic).',
+    code.trim() &&
+      !/^[A-Z]{3}-\d{3,}$/.test(code.trim().toUpperCase()) &&
+      'The code must look like WAF-001: three letters, a dash and three or more digits (Basic).',
     existing.some(({ id }) => id === code && id !== service?.id) &&
       `Code ${code} is already used by another service (Basic).`,
     !custom && draft.basePrice <= 0 && 'Base price must be above zero (Pricing).',
@@ -181,8 +187,16 @@ function ServiceWizard({
       draft.itemPrices.filter(({ item }) => item.trim()).length === 0 &&
       'Add at least one priced item (Pricing).',
     draft.workflow.length < 2 && 'The workflow needs at least two stages (Workflow).',
-    !draft.branches.some(({ available }) => available) &&
-      'Offer the service at one branch or more (Availability).',
+    days.length === 0 && 'Pick at least one available day (Availability).',
+    hours.open >= hours.close && 'The closing time must be after the opening time (Availability).',
+    !branchRows.some(({ available }) => available) &&
+      (branchList.isLoading
+        ? 'The branches are still loading (Availability).'
+        : branchList.isError
+          ? 'The branches couldn’t be loaded (Availability).'
+          : branchRows.length === 0
+            ? 'There are no branches to offer the service at yet (Availability).'
+            : 'Offer the service at one branch or more (Availability).'),
   ].filter((problem): problem is string => Boolean(problem))
 
   function moveStage(index: number, offset: number) {
@@ -192,16 +206,24 @@ function ServiceWizard({
     patch({ workflow })
   }
 
-  function finish(publish: boolean) {
-    onSave(
-      {
-        ...draft,
-        id: code.trim().toUpperCase(),
-        name: draft.name.trim(),
-        itemPrices: draft.itemPrices.filter(({ item }) => item.trim()),
-      },
-      publish,
-    )
+  async function finish(publish: boolean) {
+    setSaving(true)
+    try {
+      await onSave(
+        {
+          ...draft,
+          id: code.trim().toUpperCase(),
+          name: draft.name.trim(),
+          itemPrices: draft.itemPrices.filter(({ item }) => item.trim()),
+          branches: branchRows,
+          availableDays: formatDays(days),
+          availableHours: formatHours(hours.open, hours.close),
+        },
+        publish,
+      )
+    } finally {
+      setSaving(false)
+    }
   }
 
   const editingLive = service && service.status !== 'draft'
@@ -219,7 +241,7 @@ function ServiceWizard({
     ],
     [
       'Branches',
-      `${draft.branches.filter(({ available }) => available).length} of ${draft.branches.length}`,
+      `${branchRows.filter(({ available }) => available).length} of ${branchRows.length}`,
     ],
     [
       'Resources',
@@ -265,27 +287,27 @@ function ServiceWizard({
           ) : editingLive ? (
             <button
               type="button"
-              disabled={problems.length > 0}
-              onClick={() => finish(true)}
+              disabled={problems.length > 0 || saving}
+              onClick={() => void finish(true)}
               className={primaryButton}
             >
               <Check className="size-4" aria-hidden="true" />
-              Save Changes
+              {saving ? 'Saving…' : 'Save Changes'}
             </button>
           ) : (
             <>
               <button
                 type="button"
-                disabled={!draft.name.trim() || !code.trim()}
-                onClick={() => finish(false)}
+                disabled={!draft.name.trim() || !code.trim() || saving}
+                onClick={() => void finish(false)}
                 className={secondaryButton}
               >
-                Save Draft
+                {saving ? 'Saving…' : 'Save Draft'}
               </button>
               <button
                 type="button"
-                disabled={problems.length > 0}
-                onClick={() => finish(true)}
+                disabled={problems.length > 0 || saving}
+                onClick={() => void finish(true)}
                 className={primaryButton}
               >
                 <Check className="size-4" aria-hidden="true" />
@@ -296,6 +318,11 @@ function ServiceWizard({
         </>
       }
     >
+      {error && (
+        <div className="mb-4">
+          <FormAlert>{error}</FormAlert>
+        </div>
+      )}
       <ol className="mb-5 flex gap-1 overflow-x-auto" aria-label="Wizard steps">
         {STEPS.map((label, index) => (
           <li key={label} className="min-w-16 flex-1">
@@ -320,7 +347,7 @@ function ServiceWizard({
 
       {step === 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Service name" htmlFor="service-name">
+          <FormField label="Service name" htmlFor="service-name">
             <input
               id="service-name"
               autoFocus
@@ -330,8 +357,8 @@ function ServiceWizard({
               onChange={(event) => patch({ name: event.target.value })}
               className={fieldClass}
             />
-          </Field>
-          <Field label="Service code" htmlFor="service-code">
+          </FormField>
+          <FormField label="Service code" htmlFor="service-code">
             <div className="flex gap-1">
               <input
                 id="service-code"
@@ -360,8 +387,8 @@ function ServiceWizard({
                 <RefreshCw className="size-4" aria-hidden="true" />
               </button>
             </div>
-          </Field>
-          <Field label="Category" htmlFor="service-category">
+          </FormField>
+          <FormField label="Category" htmlFor="service-category">
             <select
               id="service-category"
               value={draft.category}
@@ -372,7 +399,7 @@ function ServiceWizard({
                 <option key={category}>{category}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           <fieldset>
             <legend className={labelClass}>Icon</legend>
             <div className="flex flex-wrap gap-1.5">
@@ -392,7 +419,7 @@ function ServiceWizard({
               ))}
             </div>
           </fieldset>
-          <Field label="Description" htmlFor="service-description" wide>
+          <FormField label="Description" htmlFor="service-description" wide>
             <textarea
               id="service-description"
               rows={3}
@@ -401,14 +428,14 @@ function ServiceWizard({
               onChange={(event) => patch({ description: event.target.value })}
               className={`${fieldClass} h-auto py-2`}
             />
-          </Field>
+          </FormField>
         </div>
       )}
 
       {step === 1 && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Pricing model" htmlFor="service-model">
+            <FormField label="Pricing model" htmlFor="service-model">
               <select
                 id="service-model"
                 value={draft.pricingModel}
@@ -423,9 +450,9 @@ function ServiceWizard({
                   </option>
                 ))}
               </select>
-            </Field>
+            </FormField>
             {!custom && (
-              <Field label={`Base price (XAF per ${unit})`} htmlFor="service-price">
+              <FormField label={`Base price (XAF per ${unit})`} htmlFor="service-price">
                 <input
                   id="service-price"
                   type="number"
@@ -435,9 +462,9 @@ function ServiceWizard({
                   onChange={(event) => patch({ basePrice: numeric(event.target.value) })}
                   className={fieldClass}
                 />
-              </Field>
+              </FormField>
             )}
-            <Field label={`Minimum quantity (${unit})`} htmlFor="service-min">
+            <FormField label={`Minimum quantity (${unit})`} htmlFor="service-min">
               <input
                 id="service-min"
                 type="number"
@@ -449,8 +476,8 @@ function ServiceWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
-            <Field label="Maximum quantity (optional)" htmlFor="service-max">
+            </FormField>
+            <FormField label="Maximum quantity (optional)" htmlFor="service-max">
               <input
                 id="service-max"
                 type="number"
@@ -463,7 +490,7 @@ function ServiceWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           </div>
 
           {custom && (
@@ -626,7 +653,7 @@ function ServiceWizard({
             </div>
           </section>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Standard processing time (hours)" htmlFor="service-hours">
+            <FormField label="Standard processing time (hours)" htmlFor="service-hours">
               <input
                 id="service-hours"
                 type="number"
@@ -638,7 +665,7 @@ function ServiceWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           </div>
         </div>
       )}
@@ -668,7 +695,7 @@ function ServiceWizard({
           </fieldset>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Staff skill" htmlFor="service-skill">
+            <FormField label="Staff skill" htmlFor="service-skill">
               <select
                 id="service-skill"
                 value={draft.staffSkill}
@@ -679,8 +706,8 @@ function ServiceWizard({
                   <option key={skill}>{skill}</option>
                 ))}
               </select>
-            </Field>
-            <Field label="Daily capacity (optional)" htmlFor="service-capacity">
+            </FormField>
+            <FormField label="Daily capacity (optional)" htmlFor="service-capacity">
               <input
                 id="service-capacity"
                 type="number"
@@ -695,8 +722,8 @@ function ServiceWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
-            <Field label="Capacity unit" htmlFor="service-capacity-unit">
+            </FormField>
+            <FormField label="Capacity unit" htmlFor="service-capacity-unit">
               <input
                 id="service-capacity-unit"
                 placeholder="kg, pieces…"
@@ -704,7 +731,7 @@ function ServiceWizard({
                 onChange={(event) => patch({ capacityUnit: event.target.value })}
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           </div>
 
           <section>
@@ -788,17 +815,43 @@ function ServiceWizard({
         <div className="space-y-4">
           <section>
             <h3 className={sectionTitle}>Branch availability & pricing</h3>
+            {branchList.isLoading && (
+              <div className="mt-2 space-y-2" aria-busy="true">
+                <p className="sr-only" role="status">Loading branches…</p>
+                {[0, 1, 2].map((key) => (
+                  <div key={key} className="h-12 animate-pulse rounded-lg bg-field" />
+                ))}
+              </div>
+            )}
+            {branchList.isError && (
+              <p role="alert" className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2.5 text-xs font-semibold text-danger">
+                Couldn’t load your branches.
+                <button
+                  type="button"
+                  onClick={() => void branchList.refetch()}
+                  disabled={branchList.isFetching}
+                  className="rounded-sm text-brand hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                >
+                  {branchList.isFetching ? 'Retrying…' : 'Retry'}
+                </button>
+              </p>
+            )}
+            {branchList.isSuccess && branchRows.length === 0 && (
+              <p className="mt-2 rounded-lg bg-field px-3 py-2.5 text-xs text-muted">
+                You have no branches yet. Create a branch first, then offer the service there.
+              </p>
+            )}
             <ul className="mt-2 space-y-2">
-              {draft.branches.map((setting, index) => {
-                const update = (change: Partial<typeof setting>) =>
+              {branchRows.map((setting, index) => {
+                const update = (change: Partial<BranchSetting>) =>
                   patch({
-                    branches: draft.branches.map((current, position) =>
+                    branches: branchRows.map((current, position) =>
                       position === index ? { ...current, ...change } : current,
                     ),
                   })
                 return (
                   <li
-                    key={setting.branch}
+                    key={setting.branchId ?? setting.branch}
                     className="flex flex-wrap items-center gap-3 rounded-lg bg-field px-3 py-2"
                   >
                     <label className="flex min-w-40 flex-1 cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
@@ -838,7 +891,7 @@ function ServiceWizard({
             </p>
           </section>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Customer visibility" htmlFor="service-visibility">
+            <FormField label="Customer visibility" htmlFor="service-visibility">
               <select
                 id="service-visibility"
                 value={draft.visibility}
@@ -853,23 +906,57 @@ function ServiceWizard({
                   </option>
                 ))}
               </select>
-            </Field>
-            <Field label="Available days" htmlFor="service-days">
-              <input
-                id="service-days"
-                value={draft.availableDays}
-                onChange={(event) => patch({ availableDays: event.target.value })}
-                className={fieldClass}
-              />
-            </Field>
-            <Field label="Available hours" htmlFor="service-open-hours">
-              <input
-                id="service-open-hours"
-                value={draft.availableHours}
-                onChange={(event) => patch({ availableHours: event.target.value })}
-                className={fieldClass}
-              />
-            </Field>
+            </FormField>
+            <fieldset className="sm:col-span-2">
+              <legend className={labelClass}>Available days</legend>
+              <div className="flex flex-wrap gap-1">
+                {WEEK_DAYS.map(({ value, label, short }) => {
+                  const on = days.includes(value)
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={on}
+                      aria-label={label}
+                      onClick={() =>
+                        patch({
+                          availableDays: formatDays(on ? days.filter((day) => day !== value) : [...days, value]),
+                        })
+                      }
+                      className={`h-9 min-w-11 rounded-md px-2 text-xs font-semibold transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none ${
+                        on ? 'bg-brand text-white' : 'bg-field text-muted hover:text-ink'
+                      }`}
+                    >
+                      {short}
+                    </button>
+                  )
+                })}
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend className={labelClass}>Available hours</legend>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="time"
+                  aria-label="Opening time"
+                  value={hours.open}
+                  onChange={(event) =>
+                    event.target.value && patch({ availableHours: formatHours(event.target.value, hours.close) })
+                  }
+                  className={fieldClass}
+                />
+                <span className="text-xs text-muted" aria-hidden="true">–</span>
+                <input
+                  type="time"
+                  aria-label="Closing time"
+                  value={hours.close}
+                  onChange={(event) =>
+                    event.target.value && patch({ availableHours: formatHours(hours.open, event.target.value) })
+                  }
+                  className={fieldClass}
+                />
+              </div>
+            </fieldset>
           </div>
         </div>
       )}
@@ -890,7 +977,7 @@ function ServiceWizard({
             </label>
             {draft.express.enabled && (
               <div className="mt-2 grid gap-3 sm:grid-cols-4">
-                <Field label="Express time (hours)" htmlFor="express-hours">
+                <FormField label="Express time (hours)" htmlFor="express-hours">
                   <input
                     id="express-hours"
                     type="number"
@@ -907,8 +994,8 @@ function ServiceWizard({
                     }
                     className={fieldClass}
                   />
-                </Field>
-                <Field label="Surcharge (%)" htmlFor="express-surcharge">
+                </FormField>
+                <FormField label="Surcharge (%)" htmlFor="express-surcharge">
                   <input
                     id="express-surcharge"
                     type="number"
@@ -925,8 +1012,8 @@ function ServiceWizard({
                     }
                     className={fieldClass}
                   />
-                </Field>
-                <Field label="Cutoff time" htmlFor="express-cutoff">
+                </FormField>
+                <FormField label="Cutoff time" htmlFor="express-cutoff">
                   <input
                     id="express-cutoff"
                     type="time"
@@ -936,8 +1023,8 @@ function ServiceWizard({
                     }
                     className={fieldClass}
                   />
-                </Field>
-                <Field label="Minimum quantity" htmlFor="express-min">
+                </FormField>
+                <FormField label="Minimum quantity" htmlFor="express-min">
                   <input
                     id="express-min"
                     type="number"
@@ -954,7 +1041,7 @@ function ServiceWizard({
                     }
                     className={fieldClass}
                   />
-                </Field>
+                </FormField>
               </div>
             )}
           </section>

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { Check, ClipboardList, Clock, Minus, Phone, ShieldCheck } from 'lucide-react'
 import { PERMISSION_MODULES, ROLE_TEMPLATES } from '../../constants/staff'
@@ -19,21 +18,9 @@ import { primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
 import { StaffStatusBadge, WorkloadBar } from './StaffBits'
+import { DetailBox } from '../ui/Details'
 
 type Tab = 'overview' | 'work' | 'performance' | 'skills' | 'permissions' | 'activity' | 'pay'
-
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-field p-3 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
 
 type StaffDrawerProps = {
   member: StaffMember | null
@@ -43,6 +30,8 @@ type StaffDrawerProps = {
   onAssign: (id: string) => void
   onAttendance: (id: string) => void
   onToggleSuspended: (id: string) => void
+  // Deletes the user account on the server
+  onDelete: (id: string) => void
 }
 
 function StaffDrawer({
@@ -53,6 +42,7 @@ function StaffDrawer({
   onAssign,
   onAttendance,
   onToggleSuspended,
+  onDelete,
 }: StaffDrawerProps) {
   const [tab, setTab] = useState<Tab>('overview')
   const tabs: { id: Tab; label: string }[] = [
@@ -81,7 +71,7 @@ function StaffDrawer({
           <span className="flex flex-wrap items-center gap-2">
             <StaffStatusBadge status={member.status} />
             <span>{member.jobTitle}</span>
-            <span className="font-mono">{member.id}</span>
+            <span className="font-mono">{member.username ? `@${member.username}` : member.id}</span>
             <span>{member.branch}</span>
           </span>
         )
@@ -125,6 +115,15 @@ function StaffDrawer({
                 className={secondaryButton}
               >
                 {member.status === 'suspended' ? 'Enable Account' : 'Disable Account'}
+              </button>
+            )}
+            {permissions.manage && (
+              <button
+                type="button"
+                onClick={() => onDelete(member.id)}
+                className={`${secondaryButton} text-danger`}
+              >
+                Delete Account
               </button>
             )}
           </div>
@@ -173,11 +172,11 @@ function StaffDrawer({
               <section>
                 <h3 className={sectionTitle}>Employment</h3>
                 <div className="mt-2">
-                  <Rows
+                  <DetailBox
                     rows={[
                       ['Department', member.department],
                       ['Employment type', member.employment],
-                      ['Hire date', formatDate(member.hiredAt)],
+                      ['Hire date', member.hiredAt ? formatDate(member.hiredAt) : 'Not recorded'],
                       ['Manager', member.manager],
                       ['Working days', member.workingDays],
                       ['System role', member.template],
@@ -188,7 +187,7 @@ function StaffDrawer({
               <section>
                 <h3 className={sectionTitle}>Contact</h3>
                 <div className="mt-2">
-                  <Rows
+                  <DetailBox
                     rows={[
                       ['Phone', member.phone],
                       ['Email', member.email],
@@ -235,7 +234,7 @@ function StaffDrawer({
               <section>
                 <h3 className={sectionTitle}>Shift & attendance today</h3>
                 <div className="mt-2">
-                  <Rows
+                  <DetailBox
                     rows={[
                       ['Shift', member.shiftStart ? `${member.shiftStart} – ${member.shiftEnd}` : 'Not scheduled'],
                       ['Clock-in', member.clockIn || 'Not clocked in'],
@@ -299,7 +298,7 @@ function StaffDrawer({
               <section>
                 <h3 className={sectionTitle}>Certification & training</h3>
                 <div className="mt-2">
-                  <Rows
+                  <DetailBox
                     rows={[
                       ['Certification', member.certification?.name ?? 'None on file'],
                       [
@@ -327,7 +326,12 @@ function StaffDrawer({
                 Role template:{' '}
                 <span className="font-semibold text-ink">{member.template}</span>
               </p>
-              <div className="relative overflow-x-auto rounded-lg ring-1 ring-line">
+              {!ROLE_TEMPLATES[member.template] && (
+                <p className="rounded-lg bg-field px-3 py-2 text-[11px] text-muted">
+                  This role’s permissions are set on the server and aren’t shown here yet.
+                </p>
+              )}
+              <div className={`relative overflow-x-auto rounded-lg ring-1 ring-line ${ROLE_TEMPLATES[member.template] ? '' : 'hidden'}`}>
                 <table className="w-full min-w-[420px] text-left text-xs">
                   <tbody>
                     {Object.entries(PERMISSION_MODULES).map(([module, actions]) => (
@@ -363,11 +367,14 @@ function StaffDrawer({
                   </tbody>
                 </table>
               </div>
-              <Rows
+              <DetailBox
                 rows={[
                   ['Login access', member.loginAccess ? 'Enabled' : 'Disabled'],
                   ['Two-factor authentication', member.twoFactor ? 'On' : 'Off'],
-                  ['Last login', `${formatDate(member.lastLoginAt)}, ${formatClock(member.lastLoginAt)}`],
+                  [
+                    'Last login',
+                    member.lastLoginAt ? `${formatDate(member.lastLoginAt)}, ${formatClock(member.lastLoginAt)}` : 'Never',
+                  ],
                   ['Account status', member.status === 'suspended' ? 'Disabled' : 'Active'],
                 ]}
               />
@@ -390,7 +397,7 @@ function StaffDrawer({
 
           {active === 'pay' && (
             <div className="space-y-2">
-              <Rows
+              <DetailBox
                 rows={[
                   ['Base salary', `${formatXaf(member.monthlySalary)} / month`],
                   ['Employment type', member.employment],

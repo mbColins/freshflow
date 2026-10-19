@@ -39,6 +39,10 @@ export type BranchProfile = {
   id: string
   name: string
   description: string
+  // The saved logo; a newly chosen file is sent alongside the profile
+  logoUrl: string | null
+  // Uuid of the tenant the branch belongs to; '' = the caller's own tenant
+  tenant: string
   type: BranchType
   status: BranchStatus
   country: string
@@ -123,6 +127,9 @@ export type BranchStockItem = {
 }
 
 export type Branch = BranchProfile & {
+  // What the API addresses the branch by (GET / PATCH / DELETE /branch/{branchId});
+  // `id` stays the branch code (BR-001) that other modules refer to
+  uuid: string
   statusNote: string
   openedAt: string
   stats: BranchStats

@@ -17,6 +17,8 @@ export type CustomerType = 'new' | 'returning' | 'corporate'
 export type OrderRole = 'admin' | 'manager' | 'receptionist' | 'staff'
 
 export type Customer = {
+  // Set for customers picked from the customers API
+  uuid?: string
   name: string
   phone: string
   email: string
@@ -58,7 +60,10 @@ export type QualityCheck = {
 }
 
 export type Order = {
+  // The order number shown to people, e.g. ORD-10421
   id: string
+  // What the API addresses the order by; absent for orders not from the API
+  uuid?: string
   invoice: string
   customer: Customer
   items: OrderItem[]

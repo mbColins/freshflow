@@ -30,7 +30,7 @@ import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
 import { DEFAULT_CATEGORIES, SERVICE_PERMISSIONS } from '../constants/services'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
-import useServices, { serviceStore } from '../hooks/useServices'
+import { serviceStore, useServicesQuery } from '../hooks/useServices'
 import type { OrderRole } from '../types/order'
 import type { LaundryService } from '../types/service'
 import { formatCompactXaf, formatPrice, withAudit } from '../utils/services'
@@ -48,11 +48,13 @@ const TABS = [
 ] as const
 
 const TOAST_MS = 4000
+const NO_SERVICES: LaundryService[] = []
 
 function ServiceDetailPage() {
   const { serviceId } = useParams()
   const now = useNow()
-  const services = useServices()
+  const servicesQuery = useServicesQuery()
+  const services = servicesQuery.data?.items ?? NO_SERVICES
   const service = services.find(({ id }) => id === serviceId)
   const [role] = useLocalStorage<OrderRole>('services.role', 'manager')
   const [customCategories] = useLocalStorage<string[]>('services.categories', [])
@@ -61,6 +63,7 @@ function ServiceDetailPage() {
   const [promotionOpen, setPromotionOpen] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const permissions = SERVICE_PERMISSIONS[role]
 
@@ -69,6 +72,22 @@ function ServiceDetailPage() {
     const timer = window.setTimeout(() => setToast(null), TOAST_MS)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  // A save the server refused is undone; say why
+  const reportFailure = (error: string | null) => {
+    if (error) setToast(error)
+  }
+
+  if (servicesQuery.isLoading) {
+    return (
+      <div className="space-y-2 rounded-xl bg-white p-3 ring-1 ring-line" aria-busy="true">
+        <p className="sr-only" role="status">Loading the service…</p>
+        {[0, 1, 2].map((key) => (
+          <div key={key} className="h-14 animate-pulse rounded-md bg-field" />
+        ))}
+      </div>
+    )
+  }
 
   if (!service || (service.status === 'draft' && !permissions.edit)) {
     return (
@@ -93,13 +112,20 @@ function ServiceDetailPage() {
   ]
 
   function setActive(next: boolean) {
-    serviceStore.update([service!.id], (current) =>
-      withAudit(
-        { ...current, status: next ? 'active' : 'inactive', statusReason: '' },
-        CURRENT_USER,
-        { change: next ? 'Activated service' : 'Deactivated service' },
-      ),
-    )
+    void serviceStore
+      .update([service!.id], (current) =>
+        withAudit(
+          {
+            ...current,
+            status: next ? 'active' : 'inactive',
+            // The API requires a reason for INACTIVE
+            statusReason: next ? '' : `Deactivated by ${CURRENT_USER}`,
+          },
+          CURRENT_USER,
+          { change: next ? 'Activated service' : 'Deactivated service' },
+        ),
+      )
+      .then(reportFailure)
     setToast(next ? 'Service activated' : 'Service deactivated')
   }
 
@@ -109,9 +135,9 @@ function ServiceDetailPage() {
     permissions,
     onEditStep: setWizardStep,
     onChange: (change, audit) =>
-      serviceStore.update([service.id], (current) =>
-        withAudit(change(current), CURRENT_USER, { change: audit }),
-      ),
+      void serviceStore
+        .update([service.id], (current) => withAudit(change(current), CURRENT_USER, { change: audit }))
+        .then(reportFailure),
     onCreatePromotion: () => setPromotionOpen(true),
   }
 
@@ -264,9 +290,14 @@ function ServiceDetailPage() {
           initialStep={wizardStep}
           categories={categories}
           existing={services}
-          onClose={() => setWizardStep(null)}
-          onSave={(saved: LaundryService, publish) => {
-            serviceStore.save(
+          error={saveError}
+          onClose={() => {
+            setSaveError(null)
+            setWizardStep(null)
+          }}
+          onSave={async (saved: LaundryService, publish) => {
+            setSaveError(null)
+            const error = await serviceStore.save(
               withAudit(
                 {
                   ...saved,
@@ -288,6 +319,10 @@ function ServiceDetailPage() {
                 },
               ),
             )
+            if (error) {
+              setSaveError(error)
+              return
+            }
             setWizardStep(null)
             setToast('Service updated')
           }}
@@ -298,13 +333,17 @@ function ServiceDetailPage() {
           serviceName={service.name}
           onClose={() => setPromotionOpen(false)}
           onSave={(promotion) => {
-            serviceStore.update([service.id], (current) =>
-              withAudit(
-                { ...current, promotions: [...current.promotions, promotion] },
-                CURRENT_USER,
-                { change: `Created promotion “${promotion.name}”` },
-              ),
-            )
+            // Kept until the list reloads: promotions aren't part of the service API
+            // TODO: save through the promotions endpoints once they exist
+            void serviceStore
+              .update([service.id], (current) =>
+                withAudit(
+                  { ...current, promotions: [...current.promotions, promotion] },
+                  CURRENT_USER,
+                  { change: `Created promotion “${promotion.name}”` },
+                ),
+              )
+              .then(reportFailure)
             setPromotionOpen(false)
             setToast('Promotion created')
           }}

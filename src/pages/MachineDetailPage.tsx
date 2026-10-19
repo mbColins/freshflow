@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { ArrowLeft, Ellipsis, Pencil, TriangleAlert, Wrench } from 'lucide-react'
-import { MachineGlyph, MachineStatusBadge, Stat } from '../components/machines/MachineBits'
+import { MachineGlyph, MachineStatusBadge } from '../components/machines/MachineBits'
+import StatTile from '../components/ui/StatTile'
 import {
   ActivityTab,
   AnalyticsTab,
@@ -188,12 +189,12 @@ function MachineDetailPage() {
           )}
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Current status" value={machine.job ? `${machine.job.progress}% of cycle` : retired ? 'Retired' : machine.status === 'available' ? 'Ready' : 'Not running'} />
-            <Stat label="Utilization" value={`${machine.utilization}%`} />
-            <Stat label="Runtime today" value={formatRuntime(machine.runtimeTodayMin)} />
-            <Stat label="Cycles today" value={machine.cyclesToday} />
-            <Stat label="Total cycles" value={machine.totalCycles.toLocaleString('en-US')} />
-            <Stat label="Next maintenance" value={formatDay(machine.nextMaintenanceAt, true)} note={maintenance.label} />
+            <StatTile label="Current status" value={machine.job ? `${machine.job.progress}% of cycle` : retired ? 'Retired' : machine.status === 'available' ? 'Ready' : 'Not running'} />
+            <StatTile label="Utilization" value={`${machine.utilization}%`} />
+            <StatTile label="Runtime today" value={formatRuntime(machine.runtimeTodayMin)} />
+            <StatTile label="Cycles today" value={machine.cyclesToday} />
+            <StatTile label="Total cycles" value={machine.totalCycles.toLocaleString('en-US')} />
+            <StatTile label="Next maintenance" value={formatDay(machine.nextMaintenanceAt, true)} note={maintenance.label} />
           </div>
         </div>
 

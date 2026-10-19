@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
-import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Controller, useForm, useWatch } from 'react-hook-form'
+import { Link, Navigate, useNavigate } from 'react-router'
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,21 +10,50 @@ import {
   Lock,
   ShieldCheck,
 } from 'lucide-react'
+import { useResetPasswordMutation, useSetPasswordMutation } from '../../services/authApi'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import { logout, selectVerification } from '../../store/slices/authSlice'
+import { NETWORK_ERROR_MESSAGE, serverMessage } from '../../utils/apiErrors'
+import FormAlert from '../ui/FormAlert'
 import AuthFooter from './AuthFooter'
 import AuthHeader from './AuthHeader'
 import PasswordInput from './PasswordInput'
 
+type ResetPasswordValues = {
+  password: string
+  confirmPassword: string
+  signOutOthers: boolean
+}
+
+// The backend's policy (weak_password otherwise): 8–128 characters with at
+// least one letter and one digit
 const CRITERIA = [
-  { label: '10+ characters', test: (value: string) => value.length >= 10 },
   {
-    label: 'Uppercase & lowercase',
-    test: (value: string) => /[a-z]/.test(value) && /[A-Z]/.test(value),
+    label: '8 to 128 characters',
+    test: (value: string) => value.length >= 8 && value.length <= 128,
   },
-  {
-    label: 'At least 1 number or symbol',
-    test: (value: string) => /[\d\W_]/.test(value),
-  },
+  { label: 'At least 1 letter', test: (value: string) => /[A-Za-z]/.test(value) },
+  { label: 'At least 1 number', test: (value: string) => /\d/.test(value) },
 ]
+
+// What went wrong, from the backend's error code
+function failureMessage(error: unknown, recovery: boolean) {
+  const status = (error as { status?: unknown } | undefined)?.status
+  if (status === 'FETCH_ERROR' || status === 'TIMEOUT_ERROR') return NETWORK_ERROR_MESSAGE
+  const code = (serverMessage(error) ?? '').toLowerCase().replace(/[\s-]+/g, '_')
+  if (code.includes('weak_password')) {
+    return 'The password needs 8 to 128 characters, with at least one letter and one number.'
+  }
+  if (code.includes('different_from_old')) return 'Choose a password different from your current one.'
+  if (code.includes('otp_not_found') || code.includes('otp_expired')) {
+    return 'This code has expired or was already used. Request a new code.'
+  }
+  if (recovery && (status === 401 || code.includes('invalid'))) {
+    return 'The code is incorrect. Go back and check it, or request a new one.'
+  }
+  if (status === 401 || status === 403) return 'Your session expired. Sign in again to set your password.'
+  return 'This password was not accepted. Try a different one.'
+}
 
 const STRENGTH_LEVELS = [
   { label: 'Weak Password', bar: 'bg-red-500', text: 'text-red-600' },
@@ -44,9 +73,32 @@ function getStrengthScore(password: string, metCount: number) {
 function ResetPasswordForm() {
   const id = useId()
   const navigate = useNavigate()
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [signOutOthers, setSignOutOthers] = useState(true)
+  const dispatch = useAppDispatch()
+  // Set by login or forgot password; OTP validation adds the resetUuid and
+  // resetToken used here
+  const verification = useAppSelector(selectVerification)
+  // Set once the reset succeeds, so clearing `verification` doesn't trip the
+  // redirect below while the navigation (a React transition) is still pending
+  const [done, setDone] = useState(false)
+  const {
+    control,
+    register,
+    handleSubmit,
+    formState: { isSubmitting },
+  } = useForm<ResetPasswordValues>({
+    defaultValues: { password: '', confirmPassword: '', signOutOthers: true },
+  })
+  const [password, confirmPassword] = useWatch({
+    control,
+    name: ['password', 'confirmPassword'],
+  })
+  // First login sets the password with the token from OTP validation; forgot
+  // password sends the typed code with the new password
+  const recovery = verification?.role === 'FORGOT_PASSWORD'
+  const [setPassword, { error: setError }] = useSetPasswordMutation()
+  const [resetPassword, { error: resetError }] = useResetPasswordMutation()
+  const error = recovery ? resetError : setError
+  const message = error ? failureMessage(error, recovery) : null
 
   const results = CRITERIA.map(({ label, test }) => ({
     label,
@@ -59,10 +111,43 @@ function ResetPasswordForm() {
   const matches = confirmPassword !== '' && confirmPassword === password
   const mismatch = confirmPassword !== '' && confirmPassword !== password
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    // TODO: send { password, signOutOthers } to the auth API and only continue on success
-    navigate('/login', { replace: true, state: { passwordReset: true } })
+  // TODO: send `signOutOthers` once the API supports it
+  // The confirmation is checked here only; the API takes the new password alone
+  async function onSubmit({ password }: ResetPasswordValues) {
+    if (!verification) return
+    try {
+      if (recovery) {
+        if (!verification.resetCode) return
+        await resetPassword({
+          uuid: verification.uuid,
+          otp: verification.resetCode,
+          newPassword: password,
+        }).unwrap()
+      } else {
+        if (!verification.resetUuid) return
+        await setPassword({
+          uuid: verification.resetUuid,
+          token: verification.resetToken,
+          newPassword: password,
+        }).unwrap()
+      }
+      setDone(true)
+      // Also drops any PRE_AUTH token from a first login: the user signs in
+      // again with the new password
+      dispatch(logout())
+      navigate('/login', { replace: true, state: { passwordReset: true } })
+    } catch {
+      // `error` drives the message above the fields
+    }
+  }
+
+  // Reached without a code (e.g. after a reload): back to the start of
+  // whichever flow sent the user here
+  if (!(recovery ? verification?.resetCode : verification?.resetUuid)) {
+    if (done) return null
+    const start =
+      verification?.role === 'FIRST_LOGIN' ? '/login' : '/forgot-password'
+    return <Navigate to={start} replace />
   }
 
   return (
@@ -76,7 +161,13 @@ function ResetPasswordForm() {
         Enter a strong password for operator account
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        noValidate
+        className="mt-5 space-y-4"
+      >
+        {message && <FormAlert>{message}</FormAlert>}
+
         <div>
           <div className="flex items-center justify-between">
             <label htmlFor={`${id}-password`} className={labelClass}>
@@ -89,14 +180,21 @@ function ResetPasswordForm() {
               Policy guidelines
             </a>
           </div>
-          <PasswordInput
-            id={`${id}-password`}
-            name="new-password"
-            icon={Lock}
-            value={password}
-            onChange={setPassword}
-            autoComplete="new-password"
-            describedBy={`${id}-criteria`}
+          <Controller
+            control={control}
+            name="password"
+            rules={{ validate: () => meetsPolicy }}
+            render={({ field }) => (
+              <PasswordInput
+                id={`${id}-password`}
+                name={field.name}
+                icon={Lock}
+                value={field.value}
+                onChange={field.onChange}
+                autoComplete="new-password"
+                describedBy={`${id}-criteria`}
+              />
+            )}
           />
 
           <div className="mt-3">
@@ -150,15 +248,22 @@ function ResetPasswordForm() {
           <label htmlFor={`${id}-confirm`} className={labelClass}>
             Confirm New Password
           </label>
-          <PasswordInput
-            id={`${id}-confirm`}
-            name="confirm-password"
-            icon={ShieldCheck}
-            value={confirmPassword}
-            onChange={setConfirmPassword}
-            autoComplete="new-password"
-            describedBy={`${id}-match`}
-            invalid={mismatch}
+          <Controller
+            control={control}
+            name="confirmPassword"
+            rules={{ validate: () => matches }}
+            render={({ field }) => (
+              <PasswordInput
+                id={`${id}-confirm`}
+                name={field.name}
+                icon={ShieldCheck}
+                value={field.value}
+                onChange={field.onChange}
+                autoComplete="new-password"
+                describedBy={`${id}-match`}
+                invalid={mismatch}
+              />
+            )}
           />
           <p
             id={`${id}-match`}
@@ -183,9 +288,7 @@ function ResetPasswordForm() {
         <label className="flex cursor-pointer items-start gap-2.5 text-xs leading-relaxed font-medium text-ink">
           <input
             type="checkbox"
-            name="sign-out-others"
-            checked={signOutOthers}
-            onChange={(event) => setSignOutOthers(event.target.checked)}
+            {...register('signOutOthers')}
             className="mt-0.5 size-4 shrink-0 rounded accent-brand"
           />
           Sign out of all other laundry bay tablets, telemetry controllers, and
@@ -194,10 +297,10 @@ function ResetPasswordForm() {
 
         <button
           type="submit"
-          disabled={!meetsPolicy || !matches}
+          disabled={!meetsPolicy || !matches || isSubmitting}
           className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand text-sm font-bold text-white shadow-lg shadow-brand/25 transition hover:bg-brand-dark focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:bg-brand"
         >
-          Reset Password &amp; Sign In
+          {isSubmitting ? 'Resetting…' : 'Reset Password & Sign In'}
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
 

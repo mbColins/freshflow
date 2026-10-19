@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import {
   ArrowRight,
   Ban,
@@ -39,17 +40,12 @@ import {
   getSubtotal,
   getTotal,
 } from '../../utils/orders'
+import { whatsappHref } from '../../utils/contact'
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
 import { PaymentBadge, PriorityBadge, StatusBadge } from './OrderBadges'
-import {
-  dangerButton,
-  fieldClass,
-  labelClass,
-  primaryButton,
-  secondaryButton,
-  sectionTitle,
-} from './styles'
+import { dangerButton, fieldClass, labelClass, primaryButton, secondaryButton } from './styles'
+import { DetailBox, DrawerSection } from '../ui/Details'
 
 type OrderDrawerProps = {
   order: Order | null
@@ -67,28 +63,6 @@ type OrderDrawerProps = {
   onCancel: (id: string) => void
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className={sectionTitle}>{title}</h3>
-      <div className="mt-2">{children}</div>
-    </section>
-  )
-}
-
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-field p-3 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 function PaymentForm({
   balance,
   onSubmit,
@@ -100,20 +74,22 @@ function PaymentForm({
     reference: string
   }) => void
 }) {
-  const [amount, setAmount] = useState(String(Math.round(balance)))
-  const [method, setMethod] = useState<PaymentMethod>('Cash')
-  const [reference, setReference] = useState('')
-  const value = Number(amount)
-  const valid = value > 0 && value <= Math.round(balance)
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!valid) return
-    onSubmit({ amount: value, method, reference: reference.trim() })
-  }
+  const max = Math.round(balance)
+  const { register, handleSubmit, control } = useForm<{
+    amount: string
+    method: PaymentMethod
+    reference: string
+  }>({ defaultValues: { amount: String(max), method: 'Cash', reference: '' } })
+  const value = Number(useWatch({ control, name: 'amount' }))
+  const valid = value > 0 && value <= max
 
   return (
-    <form onSubmit={handleSubmit} className="mt-2 grid gap-2 sm:grid-cols-4">
+    <form
+      onSubmit={handleSubmit(({ amount, method, reference }) => {
+        if (valid) onSubmit({ amount: Number(amount), method, reference: reference.trim() })
+      })}
+      className="mt-2 grid gap-2 sm:grid-cols-4"
+    >
       <div>
         <label htmlFor="payment-amount" className={labelClass}>
           Amount (XAF)
@@ -124,8 +100,7 @@ function PaymentForm({
           min="1"
           max={Math.round(balance)}
           inputMode="numeric"
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
+          {...register('amount')}
           className={fieldClass}
         />
       </div>
@@ -135,8 +110,7 @@ function PaymentForm({
         </label>
         <select
           id="payment-method"
-          value={method}
-          onChange={(event) => setMethod(event.target.value as PaymentMethod)}
+          {...register('method')}
           className={fieldClass}
         >
           {PAYMENT_METHODS.map((option) => (
@@ -151,8 +125,7 @@ function PaymentForm({
         <input
           id="payment-reference"
           placeholder="Optional"
-          value={reference}
-          onChange={(event) => setReference(event.target.value)}
+          {...register('reference')}
           className={fieldClass}
         />
       </div>
@@ -287,7 +260,8 @@ function QualitySection({
 function ContactActions({ order }: { order: Order }) {
   const [template, setTemplate] = useState(MESSAGE_TEMPLATES[0])
   const phone = order.customer.phone.replace(/[^\d+]/g, '')
-  const message = encodeURIComponent(`${template} (Order #${order.id})`)
+  const text = `${template} (Order #${order.id})`
+  const message = encodeURIComponent(text)
   const linkClass = `${secondaryButton} h-8`
 
   return (
@@ -312,7 +286,7 @@ function ContactActions({ order }: { order: Order }) {
           SMS
         </a>
         <a
-          href={`https://wa.me/${phone.replace('+', '')}?text=${message}`}
+          href={whatsappHref(phone, text)}
           target="_blank"
           rel="noreferrer"
           className={linkClass}
@@ -445,8 +419,8 @@ function OrderDrawer({
             </span>
           </div>
 
-          <Section title="Customer">
-            <Rows
+          <DrawerSection title="Customer">
+            <DetailBox
               rows={[
                 ['Name', order.customer.name],
                 ['Phone', order.customer.phone],
@@ -461,10 +435,10 @@ function OrderDrawer({
                   : []),
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Order information">
-            <Rows
+          <DrawerSection title="Order information">
+            <DetailBox
               rows={[
                 ['Created', formatWhen(order.createdAt, now)],
                 [
@@ -507,9 +481,9 @@ function OrderDrawer({
                 ['Priority', <PriorityBadge order={order} />],
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title={`Items (${order.items.length} lines)`}>
+          <DrawerSection title={`Items (${order.items.length} lines)`}>
             <div className="overflow-x-auto rounded-lg ring-1 ring-line">
               <table className="w-full min-w-[440px] text-left text-xs">
                 <thead>
@@ -540,10 +514,10 @@ function OrderDrawer({
                 </tbody>
               </table>
             </div>
-          </Section>
+          </DrawerSection>
 
           {permissions.financials && (
-            <Section title="Pricing & payment">
+            <DrawerSection title="Pricing & payment">
               <dl className="space-y-1.5 rounded-lg bg-field p-3 text-xs">
                 {(
                   [
@@ -618,11 +592,11 @@ function OrderDrawer({
                     onSubmit={(payment) => onRecordPayment(order.id, payment)}
                   />
                 )}
-            </Section>
+            </DrawerSection>
           )}
 
-          <Section title="Pickup / delivery">
-            <Rows
+          <DrawerSection title="Pickup / delivery">
+            <DetailBox
               rows={
                 order.method === 'delivery'
                   ? [
@@ -644,10 +618,10 @@ function OrderDrawer({
                     ]
               }
             />
-          </Section>
+          </DrawerSection>
 
           {(order.customerNotes || order.staffNotes || order.handling) && (
-            <Section title="Notes">
+            <DrawerSection title="Notes">
               <div className="space-y-2 text-xs">
                 {order.handling && (
                   <p className="flex items-start gap-2 rounded-lg bg-warning/10 p-3 font-semibold text-warning">
@@ -668,23 +642,23 @@ function OrderDrawer({
                   </p>
                 )}
               </div>
-            </Section>
+            </DrawerSection>
           )}
 
-          <Section title="Quality control">
+          <DrawerSection title="Quality control">
             <QualitySection
               key={`${order.id}-${order.status}-${order.qc.result}`}
               order={order}
               canEdit={permissions.updateStatus}
               onResult={(qc) => onQualityResult(order.id, qc)}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Contact customer">
+          <DrawerSection title="Contact customer">
             <ContactActions key={order.id} order={order} />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Timeline">
+          <DrawerSection title="Timeline">
             <ol className="space-y-3 border-l border-line pl-4">
               {order.timeline.map((entry, index) => (
                 <li key={`${entry.at}-${index}`} className="relative text-xs">
@@ -702,7 +676,7 @@ function OrderDrawer({
                 </li>
               ))}
             </ol>
-          </Section>
+          </DrawerSection>
         </div>
       )}
     </Modal>

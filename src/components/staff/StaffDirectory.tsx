@@ -19,6 +19,7 @@ import { fieldClass, iconButton, secondaryButton } from '../orders/styles'
 import Menu, { MenuItem } from '../ui/Menu'
 import SegmentedControl from '../ui/SegmentedControl'
 import { StaffAvatar, StaffStatusBadge, WorkloadBar } from './StaffBits'
+import { telHref } from '../../utils/contact'
 
 export type StaffView = 'table' | 'cards'
 
@@ -38,7 +39,6 @@ const headClass =
   'sticky top-0 z-10 bg-white px-2.5 py-2.5 text-left text-[9px] font-bold tracking-wider whitespace-nowrap text-muted uppercase shadow-[inset_0_-1px_0_var(--color-line)]'
 const bulkActionClass =
   'inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-2.5 text-[11px] font-semibold text-white transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none'
-const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, '')}`
 
 type StaffDirectoryProps = {
   searchRef: RefObject<HTMLInputElement | null>
@@ -370,7 +370,7 @@ function StaffDirectory({
                               {member.name}
                             </button>
                             <span className="block font-mono text-[10px] text-muted">
-                              {member.id}
+                              {member.username ? `@${member.username}` : member.id}
                             </span>
                           </div>
                         </div>

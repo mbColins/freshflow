@@ -36,9 +36,15 @@ import {
   STAFF_PERSPECTIVE_USER,
 } from '../constants/orders'
 import type { PreviewState } from '../constants/orders'
-import { SAMPLE_ORDERS } from '../constants/sampleOrders'
 import useCustomers from '../hooks/useCustomers'
 import useLocalStorage from '../hooks/useLocalStorage'
+import { useChangeOrders, useOrdersQuery } from '../hooks/useOrders'
+import {
+  useAddOrderPaymentMutation,
+  useUpdateOrderQcMutation,
+  useUpdateOrderStatusMutation,
+} from '../services/orderApi'
+import { toApiPaymentMethod, toApiStatus } from '../utils/orderMapping'
 import useNow from '../hooks/useNow'
 import type {
   FulfilmentMethod,
@@ -71,7 +77,12 @@ type DialogName = 'new' | 'scan' | 'filters' | 'prefs'
 
 function OrdersPage() {
   const now = useNow()
-  const [orders, setOrders] = useState<Order[]>(SAMPLE_ORDERS)
+  const ordersQuery = useOrdersQuery()
+  const orders = ordersQuery.items
+  const changeOrders = useChangeOrders()
+  const [updateStatus] = useUpdateOrderStatusMutation()
+  const [addPayment] = useAddOrderPaymentMutation()
+  const [updateQc] = useUpdateOrderQcMutation()
   const [role, setRole] = useState<OrderRole>('manager')
   const [preview, setPreview] = useState<PreviewState>('normal')
   const [filters, setFilters] = useState<OrderFilters>(EMPTY_FILTERS)
@@ -113,9 +124,17 @@ function OrdersPage() {
   const permissions = PERMISSIONS[role]
   const actor = role === 'staff' ? STAFF_PERSPECTIVE_USER : CURRENT_USER
 
+  // The preview switch overrides what the request says, for checking layouts
+  const loadState: PreviewState = ordersQuery.isLoading
+    ? 'loading'
+    : ordersQuery.isError && orders.length === 0
+      ? 'error'
+      : 'normal'
+  const shown = preview === 'normal' ? loadState : preview
+
   // Everything the current role may see, before filters
   const visibleOrders =
-    preview === 'empty'
+    shown === 'empty'
       ? []
       : permissions.assignedOnly
         ? orders.filter(({ assignedTo }) => assignedTo === STAFF_PERSPECTIVE_USER)
@@ -191,9 +210,24 @@ function OrdersPage() {
     setOpenOrderId(null)
   }
 
-  // TODO: replace these in-memory updates with calls to the orders API
-  function updateOrders(ids: string[], update: (order: Order) => Order) {
-    setOrders(orders.map((order) => (ids.includes(order.id) ? update(order) : order)))
+  // Shows a change at once and sends it with `send`, if given; the toast says
+  // `done`, plus how many orders the server refused (those are put back).
+  // Without `send` the change has no endpoint yet and stays on screen only.
+  async function updateOrders(
+    ids: string[],
+    update: (order: Order) => Order,
+    done: string,
+    send?: (order: Order) => Promise<unknown>,
+  ) {
+    const targets = orders.filter(({ id }) => ids.includes(id))
+    const refused = await changeOrders(targets, update, send)
+    setToast(
+      refused === 0
+        ? done
+        : refused === targets.length
+          ? 'The server refused this change. Nothing was saved, try again.'
+          : `${done}, but ${refused} of ${targets.length} orders couldn’t be saved.`,
+    )
   }
 
   function withEvent(order: Order, action: string, note?: string): Order {
@@ -206,27 +240,35 @@ function OrdersPage() {
     }
   }
 
+  // PATCH /order/{id}/status. The backend only allows forward moves (and
+  // cancelling with a note), so moving an order back is refused
   function applyStatus(ids: string[], status: OrderStatus) {
     const label = getStatus(status).label
-    updateOrders(ids, (order) =>
-      order.status === status
-        ? order
-        : withEvent(
-            {
-              ...order,
-              status,
-              completedAt:
-                status === 'completed'
-                  ? new Date().toISOString()
-                  : order.completedAt,
-            },
-            status === 'cancelled' ? 'Order cancelled' : `Moved to ${label}`,
-          ),
-    )
-    setToast(
+    const note = status === 'cancelled' ? 'Cancelled from the Orders page' : undefined
+    void updateOrders(
+      ids,
+      (order) =>
+        order.status === status
+          ? order
+          : withEvent(
+              {
+                ...order,
+                status,
+                completedAt:
+                  status === 'completed'
+                    ? new Date().toISOString()
+                    : order.completedAt,
+              },
+              status === 'cancelled' ? 'Order cancelled' : `Moved to ${label}`,
+              note,
+            ),
       ids.length === 1
         ? `Order #${ids[0]} ${status === 'cancelled' ? 'cancelled' : `moved to ${label}`}`
         : `${ids.length} orders ${status === 'cancelled' ? 'cancelled' : `moved to ${label}`}`,
+      (order) =>
+        order.status === status
+          ? Promise.resolve()
+          : updateStatus({ uuid: order.uuid!, status: toApiStatus(status), note }).unwrap(),
     )
   }
 
@@ -258,83 +300,121 @@ function OrdersPage() {
     })
   }
 
+  // Staff are picked by name, and the order API takes a staff uuid
+  // TODO: send assignedToId once the staff list comes from the API
   function handleAssign(ids: string[], staff: string) {
-    updateOrders(ids, (order) =>
-      order.assignedTo === staff
-        ? order
-        : withEvent({ ...order, assignedTo: staff }, `Assigned to ${staff}`),
+    void updateOrders(
+      ids,
+      (order) =>
+        order.assignedTo === staff
+          ? order
+          : withEvent({ ...order, assignedTo: staff }, `Assigned to ${staff}`),
+      `Assigned to ${staff}`,
     )
-    setToast(`Assigned to ${staff}`)
   }
 
   function handleRecordPayment(
     id: string,
     payment: { amount: number; method: PaymentMethod; reference: string },
   ) {
-    updateOrders([id], (order) =>
-      withEvent(
-        {
-          ...order,
-          payments: [
-            ...order.payments,
-            { ...payment, at: new Date().toISOString(), by: actor },
-          ],
-        },
-        `Payment received (${formatXaf(payment.amount)}, ${payment.method})`,
-      ),
+    void updateOrders(
+      [id],
+      (order) =>
+        withEvent(
+          {
+            ...order,
+            payments: [
+              ...order.payments,
+              { ...payment, at: new Date().toISOString(), by: actor },
+            ],
+          },
+          `Payment received (${formatXaf(payment.amount)}, ${payment.method})`,
+        ),
+      `Payment of ${formatXaf(payment.amount)} recorded`,
+      (order) =>
+        addPayment({
+          uuid: order.uuid!,
+          amount: payment.amount,
+          method: toApiPaymentMethod(payment.method),
+          reference: payment.reference,
+        }).unwrap(),
     )
-    setToast(`Payment of ${formatXaf(payment.amount)} recorded`)
   }
 
+  // One cash payment for each order's balance
   function handleMarkPaid(ids: string[]) {
-    updateOrders(ids, (order) => {
-      const balance = getBalance(order)
-      if (balance <= 0 || order.status === 'cancelled') return order
-      return withEvent(
-        {
-          ...order,
-          payments: [
-            ...order.payments,
-            {
-              amount: balance,
-              method: 'Cash',
-              reference: '',
-              at: new Date().toISOString(),
-              by: actor,
-            },
-          ],
-        },
-        `Marked as paid (${formatXaf(balance)})`,
-      )
-    })
-    setToast('Outstanding balances marked as paid')
-  }
-
-  function handleSchedule(ids: string[], method: FulfilmentMethod) {
-    updateOrders(ids, (order) =>
-      withEvent(
-        { ...order, method },
-        method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled',
-      ),
+    const owing = (order: Order) => (order.status === 'cancelled' ? 0 : getBalance(order))
+    void updateOrders(
+      ids,
+      (order) => {
+        const balance = owing(order)
+        if (balance <= 0) return order
+        return withEvent(
+          {
+            ...order,
+            payments: [
+              ...order.payments,
+              {
+                amount: balance,
+                method: 'Cash',
+                reference: '',
+                at: new Date().toISOString(),
+                by: actor,
+              },
+            ],
+          },
+          `Marked as paid (${formatXaf(balance)})`,
+        )
+      },
+      'Outstanding balances marked as paid',
+      (order) =>
+        owing(order) <= 0
+          ? Promise.resolve()
+          : addPayment({ uuid: order.uuid!, amount: owing(order), method: 'CASH', reference: '' }).unwrap(),
     )
-    setToast(method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled')
   }
 
+  // The order API can't change the fulfilment method yet
+  // TODO: send it once PATCH /order/{id} accepts fulfilmentMethod
+  function handleSchedule(ids: string[], method: FulfilmentMethod) {
+    void updateOrders(
+      ids,
+      (order) =>
+        withEvent(
+          { ...order, method },
+          method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled',
+        ),
+      method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled',
+    )
+  }
+
+  // PATCH /order/{id}/qc, then READY when it passed. A failed check sends the
+  // order back to Washing, which the backend has to do itself: status moves are
+  // forward-only for everyone else
   function handleQualityResult(id: string, qc: QualityCheck) {
     const passed = qc.result === 'passed'
-    updateOrders([id], (order) =>
-      withEvent(
-        { ...order, qc, status: passed ? 'ready' : 'washing' },
-        passed
-          ? 'Quality check passed, moved to Ready'
-          : 'Quality check failed, sent back to Washing',
-        qc.reason,
-      ),
-    )
-    setToast(
+    void updateOrders(
+      [id],
+      (order) =>
+        withEvent(
+          { ...order, qc, status: passed ? 'ready' : 'washing' },
+          passed
+            ? 'Quality check passed, moved to Ready'
+            : 'Quality check failed, sent back to Washing',
+          qc.reason,
+        ),
       passed
         ? `Order #${id} passed quality check`
         : `Order #${id} sent back to Washing`,
+      async (order) => {
+        await updateQc({
+          uuid: order.uuid!,
+          checks: qc.checks,
+          result: passed ? 'PASSED' : 'FAILED',
+          reason: qc.reason,
+        }).unwrap()
+        if (passed) await updateStatus({ uuid: order.uuid!, status: 'READY' }).unwrap()
+      },
     )
   }
 
@@ -347,14 +427,18 @@ function OrdersPage() {
     if (newOrderRequested) clearRequest()
   }
 
-  function handleCreate(order: Order, after: AfterCreate) {
-    setOrders([order, ...orders])
+  // The dialog has created the order; `order` is what the server sent back
+  // (null when the response had no order). The list reloads on its own.
+  function handleCreated(order: Order | null, after: AfterCreate) {
     closeNewOrder()
-    if (after === 'print') setReceiptId(order.id)
+    if (order && after === 'print') setReceiptId(order.id)
+    const label = order ? `Order #${order.id}` : 'The order'
     setToast(
       after === 'send'
-        ? `Order #${order.id} created. Sending confirmations isn’t connected yet.`
-        : `Order #${order.id} created`,
+        ? `${label} created. Sending confirmations isn’t connected yet.`
+        : after === 'print' && !order
+          ? 'The order was created, but the server didn’t send it back to print. Open it from the list.'
+          : `${label} created`,
     )
   }
 
@@ -375,17 +459,6 @@ function OrdersPage() {
     return true
   }
 
-  // Customers known from orders, overlaid with the customer directory
-  const customers = [
-    ...new Map([
-      ...orders.map(({ customer }) => [customer.phone, customer] as const),
-      ...crmCustomers
-        .filter(({ archived, status }) => !archived && status !== 'suspended')
-        .map((customer) => [customer.phone, toOrderCustomer(customer)] as const),
-    ]).values(),
-  ]
-  const nextNumber =
-    Math.max(...orders.map(({ id }) => Number(id.replace(/\D/g, '')))) + 1
   const selectedOrders = orders.filter(({ id }) => selectedIds.includes(id))
 
   return (
@@ -404,12 +477,17 @@ function OrdersPage() {
         onOpenNotificationPrefs={() => setDialog('prefs')}
       />
 
-      {preview === 'loading' && <OrdersSkeleton />}
-      {preview === 'error' && (
-        <OrdersErrorState onRetry={() => setPreview('normal')} />
+      {shown === 'loading' && <OrdersSkeleton />}
+      {shown === 'error' && (
+        <OrdersErrorState
+          onRetry={() => {
+            setPreview('normal')
+            void ordersQuery.refetch()
+          }}
+        />
       )}
 
-      {(preview === 'normal' || preview === 'empty') && (
+      {(shown === 'normal' || shown === 'empty') && (
         <>
           <OrderStats
             orders={visibleOrders}
@@ -619,13 +697,11 @@ function OrdersPage() {
       {(dialog === 'new' || newOrderRequested) && permissions.create && (
         <NewOrderDialog
           onClose={closeNewOrder}
-          customers={customers}
           initialCustomer={
             requestedCustomer && toOrderCustomer(requestedCustomer)
           }
           initialHandling={requestedCustomer?.laundry.instructions}
-          nextNumber={nextNumber}
-          onCreate={handleCreate}
+          onCreated={handleCreated}
         />
       )}
       {dialog === 'scan' && (

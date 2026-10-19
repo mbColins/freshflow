@@ -85,7 +85,12 @@ export type CrmCustomer = {
   email: string
   status: CustomerStatus
   points: number
+  // Branch name, as the pickers show it
   branch: string
+  // The branch's uuid in the API ('' when unknown)
+  branchId: string
+  // How the customer heard about the business
+  referralSource: string
   registeredAt: string
   lastOrderAt: string | null
   orders: number

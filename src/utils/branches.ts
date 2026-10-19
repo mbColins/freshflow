@@ -8,16 +8,21 @@ import {
   REGIONS,
   SETUP_TASKS,
 } from '../constants/branches'
+import type { BranchResponse } from '../services/branchApi'
 import type {
   Branch,
+  BranchCapacity,
   BranchFilters,
   BranchPeriod,
   BranchProfile,
   BranchStats,
+  BranchStatus,
+  BranchType,
   DayHours,
   PerformanceTier,
   RevenueGranularity,
 } from '../types/branch'
+import { csvCell } from './csv'
 import { parseCsv } from './customers'
 import { formatXaf } from './orders'
 import { formatCompactXaf } from './services'
@@ -273,11 +278,6 @@ export function compareBranches(a: Branch, b: Branch, key: BranchSortKey, period
   }
 }
 
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-}
-
 export function branchesToCsv(branches: Branch[], period: BranchPeriod, includeFinancials: boolean) {
   const header = [
     'Code', 'Name', 'Type', 'Status', 'City', 'District', 'Address', 'Phone', 'Email',
@@ -308,6 +308,8 @@ export function emptyProfile(id: string): BranchProfile {
     id,
     name: '',
     description: '',
+    logoUrl: null,
+    tenant: '',
     type: 'Standard Branch',
     status: 'active',
     country: 'Cameroon',
@@ -334,10 +336,166 @@ export function emptyProfile(id: string): BranchProfile {
   }
 }
 
+// multipart/form-data body for POST / PATCH /branch: BranchRequest as flat
+// keys, as Spring binds them. Nested objects use dotted keys (capacity.dailyOrders),
+// lists use indexed keys (hours[0].open) and string lists repeat their key
+// (paymentMethods=Cash&paymentMethods=Mobile Money). Only the fields given are
+// sent, so it also builds partial PATCH bodies.
+// Note: multipart can't express "empty list" or "no closure"; clearing those
+// needs backend support. TODO: agree on how with the backend
+export function branchFormData(profile: Partial<BranchProfile>, logo: File | null = null) {
+  const body = new FormData()
+  const put = (key: string, value: string | number | boolean | null | undefined) => {
+    if (value !== null && value !== undefined) body.append(key, String(value))
+  }
+  const { id, lat, lng, hours, specialDays, closure, services, capacity, paymentMethods, pendingSetup, ...text } = profile
+  // The branch code; `id` isn't a BranchRequest field
+  put('code', id)
+  // BranchRequest binds latitude / longitude, not lat / lng
+  put('latitude', lat)
+  put('longitude', lng)
+  for (const [key, value] of Object.entries(text)) {
+    // The logo travels as the `logo` file part, not as its URL
+    if (key === 'logoUrl') continue
+    // '' means the caller's own tenant, which the backend assumes anyway
+    if (key === 'tenant' && value === '') continue
+    put(key, value)
+  }
+  hours?.forEach((day, index) => {
+    put(`hours[${index}].open`, day.open)
+    put(`hours[${index}].close`, day.close)
+    put(`hours[${index}].closed`, day.closed)
+  })
+  specialDays?.forEach((day, index) => {
+    put(`specialDays[${index}].date`, day.date)
+    put(`specialDays[${index}].label`, day.label)
+    put(`specialDays[${index}].closed`, day.closed)
+    put(`specialDays[${index}].open`, day.open)
+    put(`specialDays[${index}].close`, day.close)
+  })
+  if (closure) {
+    put('closure.from', closure.from)
+    put('closure.to', closure.to)
+    put('closure.reason', closure.reason)
+  }
+  services?.forEach((service, index) => {
+    put(`services[${index}].name`, service.name)
+    put(`services[${index}].enabled`, service.enabled)
+    // Left out = use the catalog price
+    put(`services[${index}].price`, service.price)
+  })
+  if (capacity) {
+    for (const [key, value] of Object.entries(capacity)) put(`capacity.${key}`, value)
+  }
+  paymentMethods?.forEach((method) => put('paymentMethods', method))
+  pendingSetup?.forEach((task) => put('pendingSetup', task))
+  if (logo) body.append('logo', logo, logo.name)
+  return body
+}
+
+// Just the profile fields of a branch (what a create request carries)
+export function profileOf(branch: BranchProfile): BranchProfile {
+  const profile = emptyProfile(branch.id)
+  for (const key of Object.keys(profile) as (keyof BranchProfile)[]) {
+    Object.assign(profile, { [key]: branch[key] })
+  }
+  return profile
+}
+
+// The profile fields that differ between two versions of a branch, for a PATCH
+export function changedProfileFields(before: BranchProfile, after: BranchProfile): Partial<BranchProfile> {
+  const keys = Object.keys(emptyProfile('')) as (keyof BranchProfile)[]
+  const changes: Partial<BranchProfile> = {}
+  for (const key of keys) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      Object.assign(changes, { [key]: after[key] })
+    }
+  }
+  // The code is the branch's identity, so it goes along with any change
+  return Object.keys(changes).length > 0 ? { ...changes, id: after.id } : changes
+}
+
+const BRANCH_TYPES: BranchType[] = ['Main Branch', 'Standard Branch', 'Pickup Point', 'Processing Center']
+
+// The API may send numbers as strings (latitude / longitude are strings)
+const toNumber = (value: unknown) => {
+  const number = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return typeof number === 'number' && Number.isFinite(number) ? number : null
+}
+
+// A branch from the API in the shape the pages use. Fields the response leaves
+// out get the new-branch defaults; trading figures, staff, machines and stock
+// start empty until the backend provides them. Null when it has no id at all.
+// TODO: confirm the response shape with the backend
+export function branchFromApi(raw: BranchResponse): Branch | null {
+  const uuid = raw.uuid ?? (raw.id !== undefined && raw.id !== null ? String(raw.id) : '')
+  const code = raw.code ?? uuid
+  if (!uuid) return null
+  const base = createBranch(emptyProfile(code), 0)
+  const status = BRANCH_STATUSES.find(({ value }) => value === raw.status?.toLowerCase())?.value
+  const type = BRANCH_TYPES.find((value) => value.toLowerCase() === raw.type?.toLowerCase())
+  const capacity: BranchCapacity = { ...base.capacity }
+  for (const key of Object.keys(capacity) as (keyof BranchCapacity)[]) {
+    capacity[key] = toNumber(raw.capacity?.[key]) ?? capacity[key]
+  }
+  return {
+    ...base,
+    uuid,
+    name: raw.name ?? code,
+    description: raw.description ?? '',
+    logoUrl: raw.logoUrl ?? raw.logo ?? null,
+    type: type ?? base.type,
+    status: (status as BranchStatus | undefined) ?? base.status,
+    country: raw.country ?? '',
+    region: raw.region ?? '',
+    city: raw.city ?? '',
+    district: raw.district ?? '',
+    address: raw.address ?? '',
+    postalCode: raw.postalCode ?? '',
+    lat: toNumber(raw.latitude ?? raw.lat),
+    lng: toNumber(raw.longitude ?? raw.lng),
+    phone: raw.phone ?? '',
+    phone2: raw.phone2 ?? '',
+    email: raw.email ?? '',
+    whatsapp: raw.whatsapp ?? '',
+    website: raw.website ?? '',
+    manager: raw.manager ?? '',
+    // Seven days, Monday first; anything else falls back to the defaults
+    hours:
+      raw.hours?.length === 7
+        ? raw.hours.map((day) => ({ open: day.open ?? '08:00', close: day.close ?? '18:00', closed: Boolean(day.closed) }))
+        : base.hours,
+    specialDays: (raw.specialDays ?? []).map((day) => ({
+      date: day.date ?? '',
+      label: day.label ?? '',
+      closed: Boolean(day.closed),
+      open: day.open ?? '',
+      close: day.close ?? '',
+    })),
+    closure: raw.closure?.from ? { from: raw.closure.from, to: raw.closure.to ?? '', reason: raw.closure.reason ?? '' } : null,
+    services: raw.services?.length
+      ? raw.services.map((service) => ({
+          name: service.name ?? '',
+          enabled: service.enabled ?? true,
+          price: toNumber(service.price),
+        }))
+      : base.services,
+    capacity,
+    paymentMethods: raw.paymentMethods ?? base.paymentMethods,
+    pendingSetup: raw.pendingSetup ?? [],
+    openedAt: (raw.createdAt ?? '').slice(0, 10) || base.openedAt,
+    // The manager row createBranch adds is from the default profile; rebuild it
+    staff: raw.manager
+      ? [{ name: raw.manager, role: 'Branch Manager', ordersProcessed: 0, workload: 0, performance: 0, status: 'Off shift' }]
+      : [],
+  }
+}
+
 // A branch with no trading history yet
 export function createBranch(profile: BranchProfile, seed: number): Branch {
   return {
     ...profile,
+    uuid: '',
     statusNote: '',
     openedAt: new Date().toISOString().slice(0, 10),
     stats: {

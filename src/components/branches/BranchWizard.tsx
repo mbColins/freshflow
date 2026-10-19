@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import type { MouseEvent, ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Check, Copy, LocateFixed, MapPin, Plus, Trash2, TriangleAlert } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { ArrowLeft, ArrowRight, Check, Copy, LocateFixed, MapPin, Plus, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import {
   BRANCH_SERVICES,
   BRANCH_TYPES,
@@ -14,6 +14,7 @@ import {
 } from '../../constants/branches'
 import type { BranchProfile, BranchType, DayHours, SpecialDay } from '../../types/branch'
 import { formatHoursSummary } from '../../utils/branches'
+import { useGetTenantDropdownQuery } from '../../services/tenantApi'
 import { formatXaf } from '../../utils/orders'
 import {
   fieldClass,
@@ -23,28 +24,11 @@ import {
   secondaryButton,
   sectionTitle,
 } from '../orders/styles'
+import FormAlert from '../ui/FormAlert'
+import FormField from '../ui/FormField'
+import { logoProblem } from '../../utils/logo'
+import LogoPicker from '../ui/LogoPicker'
 import Modal from '../ui/Modal'
-
-function Field({
-  label,
-  htmlFor,
-  wide = false,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  wide?: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
 
 type TextKey =
   | 'name' | 'id' | 'description' | 'country' | 'district' | 'address' | 'postalCode'
@@ -60,6 +44,10 @@ const CAPACITY_FIELDS: [keyof BranchProfile['capacity'], string, string][] = [
 ]
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value))
+
+// Who may create a branch under another tenant
+// TODO: platform admins only, once the API exposes the user's role
+const canPickTenant = true
 
 function getProblems(draft: BranchProfile, takenCodes: string[]) {
   const problems: string[] = []
@@ -84,6 +72,7 @@ function BranchWizard({
   mode,
   takenCodes,
   initialStep = 0,
+  error,
   onClose,
   onSave,
 }: {
@@ -91,8 +80,11 @@ function BranchWizard({
   mode: 'create' | 'edit'
   takenCodes: string[]
   initialStep?: number
+  // Server error from the last save, shown above the steps
+  error?: string | null
   onClose: () => void
-  onSave: (profile: BranchProfile) => void
+  // `logo` is a newly chosen file, sent with the profile as multipart
+  onSave: (profile: BranchProfile, logo: File | null) => Promise<void> | void
 }) {
   const [step, setStep] = useState(initialStep)
   const [draft, setDraft] = useState(initial)
@@ -101,6 +93,47 @@ function BranchWizard({
   const patch = (change: Partial<BranchProfile>) => setDraft((current) => ({ ...current, ...change }))
   const problems = getProblems(draft, takenCodes)
   const last = WIZARD_STEPS.length - 1
+  const tenants = useGetTenantDropdownQuery(undefined, { skip: !canPickTenant })
+  const tenantName = tenants.data?.find(({ uuid }) => uuid === draft.tenant)?.name
+
+  // A newly chosen logo and its preview; draft.logoUrl stays the saved one
+  const [logo, setLogo] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [logoError, setLogoError] = useState<string | null>(null)
+  const previewUrl = useRef<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => () => {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+  }, [])
+
+  function showLogo(file: File | null) {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+    previewUrl.current = file ? URL.createObjectURL(file) : null
+    setLogo(file)
+    setLogoPreview(previewUrl.current)
+  }
+
+  function chooseLogo(file: File) {
+    const problem = logoProblem(file)
+    setLogoError(problem)
+    if (!problem) showLogo(file)
+  }
+
+  function removeLogo() {
+    setLogoError(null)
+    // First drop a newly chosen file; with none, drop the saved logo
+    if (logo) showLogo(null)
+    else patch({ logoUrl: null })
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      await onSave(draft, logo)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const text = (
     id: string,
@@ -108,7 +141,7 @@ function BranchWizard({
     key: TextKey,
     options: { type?: string; placeholder?: string; wide?: boolean; disabled?: boolean } = {},
   ) => (
-    <Field label={label} htmlFor={id} wide={options.wide}>
+    <FormField label={label} htmlFor={id} wide={options.wide}>
       <input
         id={id}
         type={options.type ?? 'text'}
@@ -119,7 +152,7 @@ function BranchWizard({
         onChange={(event) => patch({ [key]: event.target.value })}
         className={`${fieldClass} disabled:opacity-60`}
       />
-    </Field>
+    </FormField>
   )
 
   const setDay = (index: number, change: Partial<DayHours>) =>
@@ -162,7 +195,7 @@ function BranchWizard({
   }
 
   const coordinate = (id: string, label: string, key: 'lat' | 'lng') => (
-    <Field label={label} htmlFor={id}>
+    <FormField label={label} htmlFor={id}>
       <input
         id={id}
         type="number"
@@ -171,11 +204,13 @@ function BranchWizard({
         onChange={(event) => patch({ [key]: event.target.value === '' ? null : Number(event.target.value) })}
         className={fieldClass}
       />
-    </Field>
+    </FormField>
   )
 
   const review: [string, string][] = [
     ['Branch', `${draft.name || 'Unnamed'} · ${draft.id} · ${draft.type}`],
+    ['Logo', logo ? `New: ${logo.name}` : draft.logoUrl ? 'Current logo' : 'None'],
+    ...(canPickTenant ? [['Tenant', draft.tenant ? (tenantName ?? draft.tenant) : 'My own tenant'] as [string, string]] : []),
     ['Location', [draft.address, draft.district, draft.city, draft.region, draft.country].filter(Boolean).join(', ')],
     ['GPS', draft.lat !== null && draft.lng !== null ? `${draft.lat}, ${draft.lng}` : 'Not set'],
     ['Contact', [draft.phone, draft.email, draft.whatsapp && `WhatsApp ${draft.whatsapp}`].filter(Boolean).join(' · ') || 'Not set'],
@@ -205,11 +240,11 @@ function BranchWizard({
           {mode === 'edit' && step < last && (
             <button
               type="button"
-              disabled={problems.length > 0}
-              onClick={() => onSave(draft)}
+              disabled={problems.length > 0 || saving}
+              onClick={() => void save()}
               className={secondaryButton}
             >
-              Save Changes
+              {saving ? 'Saving…' : 'Save Changes'}
             </button>
           )}
           {step < last ? (
@@ -220,17 +255,23 @@ function BranchWizard({
           ) : (
             <button
               type="button"
-              disabled={problems.length > 0}
-              onClick={() => onSave(draft)}
+              disabled={problems.length > 0 || saving}
+              onClick={() => void save()}
               className={primaryButton}
             >
               <Check className="size-4" aria-hidden="true" />
-              {mode === 'create' ? 'Create Branch' : 'Save Changes'}
+              {saving ? 'Saving…' : mode === 'create' ? 'Create Branch' : 'Save Changes'}
             </button>
           )}
         </>
       }
     >
+      {error && (
+        <div className="mb-4">
+          <FormAlert>{error}</FormAlert>
+        </div>
+      )}
+
       <ol className="mb-5 flex gap-1 overflow-x-auto" aria-label="Wizard steps">
         {WIZARD_STEPS.map((label, index) => (
           <li key={label} className="min-w-16 flex-1">
@@ -251,9 +292,19 @@ function BranchWizard({
 
       {step === 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <LogoPicker
+              id="branch-logo"
+              preview={logoPreview ?? draft.logoUrl}
+              file={logo}
+              error={logoError}
+              onChoose={chooseLogo}
+              onRemove={removeLogo}
+            />
+          </div>
           {text('branch-name', 'Branch name', 'name', { placeholder: 'e.g. Deido Branch' })}
           {text('branch-code', 'Branch code', 'id', { disabled: mode === 'edit' })}
-          <Field label="Branch type" htmlFor="branch-type">
+          <FormField label="Branch type" htmlFor="branch-type">
             <select
               id="branch-type"
               value={draft.type}
@@ -264,8 +315,56 @@ function BranchWizard({
                 <option key={type}>{type}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Description" htmlFor="branch-description" wide>
+          </FormField>
+          {canPickTenant && (
+            <FormField
+              label="Tenant"
+              htmlFor="branch-tenant"
+              hint={mode === 'edit' ? 'A branch can’t move to another tenant.' : undefined}
+            >
+              {/* TODO: the backend ignores BranchRequest.tenant for now ("derived
+                  from the caller"), so branches still land in the caller's own
+                  tenant until it accepts the field from platform admins */}
+              <select
+                id="branch-tenant"
+                value={draft.tenant}
+                disabled={mode === 'edit' || tenants.isLoading}
+                aria-describedby={tenants.isError ? 'branch-tenant-error' : undefined}
+                onChange={(event) => patch({ tenant: event.target.value })}
+                className={`${fieldClass} disabled:opacity-60`}
+              >
+                {tenants.isLoading ? (
+                  <option value={draft.tenant}>Loading tenants…</option>
+                ) : (
+                  <>
+                    <option value="">My own tenant</option>
+                    {tenants.data?.map(({ uuid, name }) => (
+                      <option key={uuid} value={uuid}>
+                        {name}
+                      </option>
+                    ))}
+                    {/* Keep an edited branch's tenant visible even if it isn't listed */}
+                    {draft.tenant && !tenantName && <option value={draft.tenant}>{draft.tenant}</option>}
+                  </>
+                )}
+              </select>
+              {tenants.isError && (
+                <p id="branch-tenant-error" role="alert" className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-danger">
+                  Couldn’t load the tenants.
+                  <button
+                    type="button"
+                    onClick={() => void tenants.refetch()}
+                    disabled={tenants.isFetching}
+                    className="inline-flex items-center gap-1 rounded-sm text-brand hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                  >
+                    <RotateCcw className="size-3" aria-hidden="true" />
+                    {tenants.isFetching ? 'Retrying…' : 'Retry'}
+                  </button>
+                </p>
+              )}
+            </FormField>
+          )}
+          <FormField label="Description" htmlFor="branch-description" wide>
             <textarea
               id="branch-description"
               rows={3}
@@ -273,14 +372,14 @@ function BranchWizard({
               onChange={(event) => patch({ description: event.target.value })}
               className={`${fieldClass} h-auto py-2`}
             />
-          </Field>
+          </FormField>
         </div>
       )}
 
       {step === 1 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {text('branch-country', 'Country', 'country')}
-          <Field label="Region" htmlFor="branch-region">
+          <FormField label="Region" htmlFor="branch-region">
             <select
               id="branch-region"
               value={draft.region}
@@ -291,8 +390,8 @@ function BranchWizard({
                 <option key={region}>{region}</option>
               ))}
             </select>
-          </Field>
-          <Field label="City" htmlFor="branch-city">
+          </FormField>
+          <FormField label="City" htmlFor="branch-city">
             <select
               id="branch-city"
               value={draft.city}
@@ -303,7 +402,7 @@ function BranchWizard({
                 <option key={city}>{city}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           {text('branch-district', 'District', 'district')}
           {text('branch-address', 'Street address', 'address')}
           {text('branch-postal', 'Postal code (optional)', 'postalCode')}
@@ -557,7 +656,7 @@ function BranchWizard({
       {step === 5 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {CAPACITY_FIELDS.map(([key, label, unit]) => (
-            <Field key={key} label={`${label} (${unit})`} htmlFor={`capacity-${key}`}>
+            <FormField key={key} label={`${label} (${unit})`} htmlFor={`capacity-${key}`}>
               <input
                 id={`capacity-${key}`}
                 type="number"
@@ -568,7 +667,7 @@ function BranchWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           ))}
         </div>
       )}
@@ -663,7 +762,7 @@ function BranchWizard({
             )}
           </dl>
           {mode === 'create' && (
-            <Field label="Status when created" htmlFor="branch-status">
+            <FormField label="Status when created" htmlFor="branch-status">
               <select
                 id="branch-status"
                 value={draft.status}
@@ -673,7 +772,7 @@ function BranchWizard({
                 <option value="active">Active: open for orders</option>
                 <option value="inactive">Inactive: activate when ready</option>
               </select>
-            </Field>
+            </FormField>
           )}
           {problems.length > 0 && (
             <ul className="space-y-1 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger" role="alert">

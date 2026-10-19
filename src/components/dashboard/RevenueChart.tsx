@@ -2,6 +2,8 @@ import { useState } from 'react'
 import SegmentedControl from '../ui/SegmentedControl'
 import Badge from '../ui/Badge'
 import DashboardCard from './DashboardCard'
+import { formatCompact, getTickStep } from '../../utils/charts'
+import { formatXaf } from '../../utils/orders'
 
 const RANGES = [
   { value: 'daily', label: 'Daily' },
@@ -54,23 +56,6 @@ const BASELINE = MARGIN.top + PLOT_HEIGHT
 const BAR_WIDTH = 24
 const BAR_RADIUS = 4
 const SEGMENT_GAP = 2
-
-function formatXaf(value: number) {
-  return `XAF ${Math.round(value).toLocaleString('en-US')}`
-}
-
-function formatCompact(value: number) {
-  if (value >= 1_000_000) return `${value / 1_000_000}M`
-  if (value >= 1_000) return `${value / 1_000}K`
-  return String(value)
-}
-
-function getTickStep(max: number) {
-  const rough = max / 4
-  const magnitude = 10 ** Math.floor(Math.log10(rough))
-  const multiple = [1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough)!
-  return multiple * magnitude
-}
 
 // Rounded at the data end only; square where it meets the segment below
 function roundedTopBar(x: number, top: number, bottom: number) {

@@ -15,6 +15,7 @@ import type {
 } from '../types/pricing'
 import type { Promotion } from '../types/promotion'
 import type { LaundryService } from '../types/service'
+import { csvCell } from './csv'
 import { parseCsv } from './customers'
 import { formatXaf } from './orders'
 import { dayNumber, getPromotionStatus, toDateKey } from './promotions'
@@ -357,11 +358,6 @@ export function parsePriceImport(text: string, services: LaundryService[]) {
     if (!Number.isFinite(price) || price <= 0 || service.pricingModel === 'custom') return { ...base, to: Number.isFinite(price) ? price : null, status: 'invalid' }
     return { ...base, to: price, status: price === service.basePrice ? 'unchanged' : 'valid' }
   })
-}
-
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 export function pricesToCsv(services: LaundryService[], config: PricingConfig) {

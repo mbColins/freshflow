@@ -48,7 +48,8 @@ import {
   SERVICE_PERMISSIONS,
 } from '../constants/services'
 import useLocalStorage from '../hooks/useLocalStorage'
-import useServices, { serviceStore } from '../hooks/useServices'
+import { serviceStore, useServicesQuery } from '../hooks/useServices'
+import { serviceErrorMessage } from '../services/serviceApi'
 import type { OrderRole } from '../types/order'
 import type { LaundryService, ServiceFilters } from '../types/service'
 import { downloadFile } from '../utils/orders'
@@ -63,9 +64,11 @@ import type { ServiceSortKey } from '../utils/services'
 
 const PAGE_SIZES = [10, 25, 50]
 const TOAST_MS = 4000
+const NO_SERVICES: LaundryService[] = []
 
 function ServicesPage() {
-  const allServices = useServices()
+  const servicesQuery = useServicesQuery()
+  const allServices = servicesQuery.data?.items ?? NO_SERVICES
   const [role, setRole] = useLocalStorage<OrderRole>('services.role', 'manager')
   const [preview, setPreview] = useState<PreviewState>('normal')
   const [filters, setFilters] = useState<ServiceFilters>(EMPTY_SERVICE_FILTERS)
@@ -75,6 +78,7 @@ function ServicesPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   // null = closed, '' = new service, otherwise the code being edited
   const [wizardId, setWizardId] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -149,14 +153,26 @@ function ServicesPage() {
     })
   }
 
+  // A save the server refused is undone; say why
+  const reportFailure = (error: string | null) => {
+    if (error) setToast(error)
+  }
+
   function setActive(ids: string[], active: boolean) {
-    serviceStore.update(ids, (service) =>
-      withAudit(
-        { ...service, status: active ? 'active' : 'inactive', statusReason: '' },
-        CURRENT_USER,
-        { change: active ? 'Activated service' : 'Deactivated service' },
-      ),
-    )
+    void serviceStore
+      .update(ids, (service) =>
+        withAudit(
+          {
+            ...service,
+            status: active ? 'active' : 'inactive',
+            // The API requires a reason for INACTIVE
+            statusReason: active ? '' : `Deactivated by ${CURRENT_USER} from the services list`,
+          },
+          CURRENT_USER,
+          { change: active ? 'Activated service' : 'Deactivated service' },
+        ),
+      )
+      .then(reportFailure)
     setSelectedIds([])
     setToast(
       `${ids.length} ${ids.length === 1 ? 'service' : 'services'} ${active ? 'activated' : 'deactivated'}`,
@@ -180,14 +196,15 @@ function ServicesPage() {
     else setActive([id], true)
   }
 
-  function handleSave(service: LaundryService, publish: boolean) {
+  async function handleSave(service: LaundryService, publish: boolean) {
     const existing = allServices.find(({ id }) => id === service.id)
     const status = !publish
       ? 'draft'
       : existing && existing.status !== 'draft'
         ? existing.status
         : 'active'
-    serviceStore.save(
+    setSaveError(null)
+    const error = await serviceStore.save(
       withAudit({ ...service, status }, CURRENT_USER, {
         change: !existing
           ? publish
@@ -198,6 +215,10 @@ function ServicesPage() {
             : 'Updated configuration',
       }),
     )
+    if (error) {
+      setSaveError(error)
+      return
+    }
     setWizardId(null)
     setToast(
       publish ? `${service.name} saved and published` : `${service.name} saved as draft`,
@@ -373,20 +394,42 @@ function ServicesPage() {
               onActivate={() => setActive(selectedIds, true)}
               onDeactivate={() => requestDeactivate(selectedIds)}
               onAssignCategory={(category) => {
-                serviceStore.update(selectedIds, (service) =>
-                  withAudit({ ...service, category }, CURRENT_USER, {
-                    change: 'Changed category',
-                    from: service.category,
-                    to: category,
-                  }),
-                )
+                void serviceStore
+                  .update(selectedIds, (service) =>
+                    withAudit({ ...service, category }, CURRENT_USER, {
+                      change: 'Changed category',
+                      from: service.category,
+                      to: category,
+                    }),
+                  )
+                  .then(reportFailure)
                 setToast(`${selectedIds.length} services moved to ${category}`)
               }}
               onExport={() => handleExport(selected)}
             />
           )}
 
-          {filtered.length === 0 ? (
+          {servicesQuery.isLoading ? (
+            <div className="space-y-2 rounded-xl bg-white p-3 ring-1 ring-line" aria-busy="true">
+              <p className="sr-only" role="status">Loading services…</p>
+              {[0, 1, 2, 3].map((key) => (
+                <div key={key} className="h-14 animate-pulse rounded-md bg-field" />
+              ))}
+            </div>
+          ) : servicesQuery.isError ? (
+            <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+              <h2 className="text-sm font-bold text-ink">Couldn’t load the services</h2>
+              <p className="text-xs text-muted">{serviceErrorMessage(servicesQuery.error)}</p>
+              <button
+                type="button"
+                onClick={() => void servicesQuery.refetch()}
+                disabled={servicesQuery.isFetching}
+                className={`${secondaryButton} mt-2`}
+              >
+                {servicesQuery.isFetching ? 'Retrying…' : 'Try Again'}
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
               <Layers className="size-8 text-muted/60" aria-hidden="true" />
               <h2 className="text-sm font-bold text-ink">
@@ -531,7 +574,11 @@ function ServicesPage() {
           service={editing}
           categories={categories}
           existing={allServices}
-          onClose={() => setWizardId(null)}
+          error={saveError}
+          onClose={() => {
+            setSaveError(null)
+            setWizardId(null)
+          }}
           onSave={handleSave}
         />
       )}

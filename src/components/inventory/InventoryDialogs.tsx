@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react'
 import {
   ADJUSTMENT_APPROVAL_RATIO,
@@ -26,27 +26,7 @@ import {
 } from '../orders/styles'
 import Modal from '../ui/Modal'
 import type { StockAction } from './InventoryTable'
-
-function Field({
-  label,
-  htmlFor,
-  wide = false,
-  children,
-}: {
-  label: string
-  htmlFor: string
-  wide?: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 function ItemSelect({
   id,
@@ -93,6 +73,17 @@ export type StockChange = {
   expiresAt?: string
 }
 
+// Form state: numbers stay as typed text until submit
+type StockValues = {
+  itemId: string
+  quantity: string
+  reason: string
+  reference: string
+  unitCost: string
+  batch: string
+  expiresAt: string
+}
+
 const STOCK_TITLES: Record<StockAction, string> = {
   add: 'Add Stock',
   consume: 'Record Consumption',
@@ -112,15 +103,21 @@ export function StockDialog({
   onClose: () => void
   onSubmit: (change: StockChange) => void
 }) {
-  const [itemId, setItemId] = useState(initialItemId)
-  const [quantity, setQuantity] = useState('')
-  const [reason, setReason] = useState(
-    action === 'consume' ? CONSUMPTION_REASONS[0].label : ADJUSTMENT_REASONS[0],
-  )
-  const [reference, setReference] = useState('')
-  const [unitCost, setUnitCost] = useState('')
-  const [batch, setBatch] = useState('')
-  const [expiresAt, setExpiresAt] = useState('')
+  const { register, handleSubmit, control } = useForm<StockValues>({
+    defaultValues: {
+      itemId: initialItemId,
+      quantity: '',
+      reason: action === 'consume' ? CONSUMPTION_REASONS[0].label : ADJUSTMENT_REASONS[0],
+      reference: '',
+      unitCost: '',
+      batch: '',
+      expiresAt: '',
+    },
+  })
+  const [itemId, quantity, unitCost] = useWatch({
+    control,
+    name: ['itemId', 'quantity', 'unitCost'],
+  })
 
   const item = items.find(({ id }) => id === itemId)
   const value = numeric(quantity)
@@ -144,8 +141,7 @@ export function StockDialog({
     !overdrawn &&
     (action === 'adjust' ? delta !== 0 : value > 0)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function onValid({ reason, reference, batch, expiresAt }: StockValues) {
     if (!valid || !item) return
     onSubmit({
       itemId: item.id,
@@ -193,11 +189,17 @@ export function StockDialog({
         </>
       }
     >
-      <form id="stock-form" onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
-        <Field label="Item" htmlFor="stock-item" wide>
-          <ItemSelect id="stock-item" items={items} value={itemId} onChange={setItemId} />
-        </Field>
-        <Field
+      <form id="stock-form" onSubmit={handleSubmit(onValid)} className="grid gap-3 sm:grid-cols-2">
+        <FormField label="Item" htmlFor="stock-item" wide>
+          <Controller
+            control={control}
+            name="itemId"
+            render={({ field }) => (
+              <ItemSelect id="stock-item" items={items} value={field.value} onChange={field.onChange} />
+            )}
+          />
+        </FormField>
+        <FormField
           label={
             action === 'adjust'
               ? `Actual quantity counted${item ? ` (${item.unit})` : ''}`
@@ -211,8 +213,7 @@ export function StockDialog({
             min="0"
             step="any"
             inputMode="decimal"
-            value={quantity}
-            onChange={(event) => setQuantity(event.target.value)}
+            {...register('quantity')}
             className={fieldClass}
           />
           {overdrawn && item && (
@@ -229,58 +230,40 @@ export function StockDialog({
               </span>
             </p>
           )}
-        </Field>
+        </FormField>
 
         {action === 'add' ? (
           <>
-            <Field label="Unit cost (XAF)" htmlFor="stock-cost">
+            <FormField label="Unit cost (XAF)" htmlFor="stock-cost">
               <input
                 id="stock-cost"
                 type="number"
                 min="0"
                 inputMode="numeric"
                 placeholder={item ? String(item.unitCost) : ''}
-                value={unitCost}
-                onChange={(event) => setUnitCost(event.target.value)}
+                {...register('unitCost')}
                 className={fieldClass}
               />
-            </Field>
-            <Field label="Purchase order / reference" htmlFor="stock-reference">
+            </FormField>
+            <FormField label="Purchase order / reference" htmlFor="stock-reference">
               <input
                 id="stock-reference"
                 placeholder="e.g. PO-0405"
-                value={reference}
-                onChange={(event) => setReference(event.target.value)}
+                {...register('reference')}
                 className={fieldClass}
               />
-            </Field>
-            <Field label="Batch / lot number" htmlFor="stock-batch">
-              <input
-                id="stock-batch"
-                value={batch}
-                onChange={(event) => setBatch(event.target.value)}
-                className={fieldClass}
-              />
-            </Field>
-            <Field label="Expiration date (optional)" htmlFor="stock-expiry">
-              <input
-                id="stock-expiry"
-                type="date"
-                value={expiresAt}
-                onChange={(event) => setExpiresAt(event.target.value)}
-                className={fieldClass}
-              />
-            </Field>
+            </FormField>
+            <FormField label="Batch / lot number" htmlFor="stock-batch">
+              <input id="stock-batch" {...register('batch')} className={fieldClass} />
+            </FormField>
+            <FormField label="Expiration date (optional)" htmlFor="stock-expiry">
+              <input id="stock-expiry" type="date" {...register('expiresAt')} className={fieldClass} />
+            </FormField>
           </>
         ) : (
           <>
-            <Field label="Reason" htmlFor="stock-reason">
-              <select
-                id="stock-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                className={fieldClass}
-              >
+            <FormField label="Reason" htmlFor="stock-reason">
+              <select id="stock-reason" {...register('reason')} className={fieldClass}>
                 {(action === 'consume'
                   ? CONSUMPTION_REASONS.map(({ label }) => label)
                   : ADJUSTMENT_REASONS
@@ -288,8 +271,8 @@ export function StockDialog({
                   <option key={option}>{option}</option>
                 ))}
               </select>
-            </Field>
-            <Field
+            </FormField>
+            <FormField
               label={action === 'consume' ? 'Related order or service (optional)' : 'Notes (optional)'}
               htmlFor="stock-reference"
               wide
@@ -297,11 +280,10 @@ export function StockDialog({
               <input
                 id="stock-reference"
                 placeholder={action === 'consume' ? 'e.g. ORD-10521' : ''}
-                value={reference}
-                onChange={(event) => setReference(event.target.value)}
+                {...register('reference')}
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           </>
         )}
 
@@ -373,10 +355,10 @@ export function TransferDialog({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Item" htmlFor="transfer-item" wide>
+        <FormField label="Item" htmlFor="transfer-item" wide>
           <ItemSelect id="transfer-item" items={items} value={itemId} onChange={setItemId} />
-        </Field>
-        <Field label="Direction" htmlFor="transfer-direction">
+        </FormField>
+        <FormField label="Direction" htmlFor="transfer-direction">
           <select
             id="transfer-direction"
             value={incoming ? 'in' : 'out'}
@@ -386,8 +368,8 @@ export function TransferDialog({
             <option value="in">Receive into {BRANCHES[0]}</option>
             <option value="out">Send from {BRANCHES[0]}</option>
           </select>
-        </Field>
-        <Field label={incoming ? 'Source branch' : 'Destination branch'} htmlFor="transfer-branch">
+        </FormField>
+        <FormField label={incoming ? 'Source branch' : 'Destination branch'} htmlFor="transfer-branch">
           <select
             id="transfer-branch"
             value={otherBranch}
@@ -398,8 +380,8 @@ export function TransferDialog({
               <option key={branch}>{branch}</option>
             ))}
           </select>
-        </Field>
-        <Field label={`Transfer quantity${item ? ` (${item.unit})` : ''}`} htmlFor="transfer-quantity">
+        </FormField>
+        <FormField label={`Transfer quantity${item ? ` (${item.unit})` : ''}`} htmlFor="transfer-quantity">
           <input
             id="transfer-quantity"
             type="number"
@@ -415,7 +397,7 @@ export function TransferDialog({
               Only {formatQty(free, item.unit)} is free to send.
             </p>
           )}
-        </Field>
+        </FormField>
         {item && value > 0 && (
           <dl className="space-y-1 rounded-lg bg-field p-3 text-xs sm:col-span-2">
             {(
@@ -532,7 +514,7 @@ export function PurchaseOrderDialog({
     >
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Supplier" htmlFor="po-supplier">
+          <FormField label="Supplier" htmlFor="po-supplier">
             <select
               id="po-supplier"
               value={supplier}
@@ -545,8 +527,8 @@ export function PurchaseOrderDialog({
                 </option>
               ))}
             </select>
-          </Field>
-          <Field label="Expected delivery date" htmlFor="po-expected">
+          </FormField>
+          <FormField label="Expected delivery date" htmlFor="po-expected">
             <input
               id="po-expected"
               type="date"
@@ -554,7 +536,7 @@ export function PurchaseOrderDialog({
               onChange={(event) => setExpectedAt(event.target.value)}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         </div>
 
         <ul className="space-y-2">
@@ -704,7 +686,7 @@ export function ItemWizard({
     label: string,
     key: 'stock' | 'reorder' | 'safety' | 'max' | 'unitCost' | 'dailyUse',
   ) => (
-    <Field label={label} htmlFor={id}>
+    <FormField label={label} htmlFor={id}>
       <input
         id={id}
         type="number"
@@ -715,7 +697,7 @@ export function ItemWizard({
         onChange={(event) => patch({ [key]: numeric(event.target.value) })}
         className={fieldClass}
       />
-    </Field>
+    </FormField>
   )
 
   return (
@@ -778,7 +760,7 @@ export function ItemWizard({
 
       {step === 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Item name" htmlFor="item-name">
+          <FormField label="Item name" htmlFor="item-name">
             <input
               id="item-name"
               autoFocus
@@ -787,8 +769,8 @@ export function ItemWizard({
               onChange={(event) => patch({ name: event.target.value })}
               className={fieldClass}
             />
-          </Field>
-          <Field label="SKU" htmlFor="item-sku">
+          </FormField>
+          <FormField label="SKU" htmlFor="item-sku">
             <input
               id="item-sku"
               autoComplete="off"
@@ -797,8 +779,8 @@ export function ItemWizard({
               onChange={(event) => patch({ id: event.target.value.toUpperCase() })}
               className={`${fieldClass} font-mono`}
             />
-          </Field>
-          <Field label="Category" htmlFor="item-category">
+          </FormField>
+          <FormField label="Category" htmlFor="item-category">
             <select
               id="item-category"
               value={draft.category}
@@ -809,8 +791,8 @@ export function ItemWizard({
                 <option key={name}>{name}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Unit of measurement" htmlFor="item-unit">
+          </FormField>
+          <FormField label="Unit of measurement" htmlFor="item-unit">
             <select
               id="item-unit"
               value={draft.unit}
@@ -821,15 +803,15 @@ export function ItemWizard({
                 <option key={unit}>{unit}</option>
               ))}
             </select>
-          </Field>
-          <Field label="Description" htmlFor="item-description" wide>
+          </FormField>
+          <FormField label="Description" htmlFor="item-description" wide>
             <input
               id="item-description"
               value={draft.description}
               onChange={(event) => patch({ description: event.target.value })}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         </div>
       )}
 
@@ -840,21 +822,21 @@ export function ItemWizard({
           {number('item-reorder', `Reorder level (${draft.unit})`, 'reorder')}
           {number('item-safety', `Safety stock (${draft.unit})`, 'safety')}
           {number('item-daily', `Expected daily use (${draft.unit})`, 'dailyUse')}
-          <Field label="Storage location" htmlFor="item-location">
+          <FormField label="Storage location" htmlFor="item-location">
             <input
               id="item-location"
               value={draft.location}
               onChange={(event) => patch({ location: event.target.value })}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         </div>
       )}
 
       {step === 2 && (
         <div className="grid gap-3 sm:grid-cols-2">
           {number('item-cost', 'Unit cost (XAF)', 'unitCost')}
-          <Field label="Supplier" htmlFor="item-supplier">
+          <FormField label="Supplier" htmlFor="item-supplier">
             <select
               id="item-supplier"
               value={draft.supplier}
@@ -865,7 +847,7 @@ export function ItemWizard({
                 <option key={name}>{name}</option>
               ))}
             </select>
-          </Field>
+          </FormField>
           <p className="rounded-lg bg-field p-3 text-xs text-ink sm:col-span-2">
             Inventory value = quantity × unit cost ={' '}
             <span className="font-bold">{formatXaf(draft.stock * draft.unitCost)}</span>
@@ -891,7 +873,7 @@ export function ItemWizard({
             Track expiration (chemicals and other perishable products)
           </label>
           {draft.expiresAt !== null && (
-            <Field label="Expiration date" htmlFor="item-expiry">
+            <FormField label="Expiration date" htmlFor="item-expiry">
               <input
                 id="item-expiry"
                 type="date"
@@ -902,16 +884,16 @@ export function ItemWizard({
                 }
                 className={fieldClass}
               />
-            </Field>
+            </FormField>
           )}
-          <Field label="Batch / lot number" htmlFor="item-batch">
+          <FormField label="Batch / lot number" htmlFor="item-batch">
             <input
               id="item-batch"
               value={draft.batch}
               onChange={(event) => patch({ batch: event.target.value })}
               className={fieldClass}
             />
-          </Field>
+          </FormField>
         </div>
       )}
 

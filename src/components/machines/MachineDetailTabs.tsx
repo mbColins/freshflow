@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { Link } from 'react-router'
 import { ArrowDown, ArrowUp, CircleStop, Copy, Pause, Play, Plus, TriangleAlert, X } from 'lucide-react'
 import { TIME_SERIES, UTILIZATION_RANGES } from '../../constants/machines'
@@ -26,7 +27,8 @@ import Badge from '../ui/Badge'
 import type { BadgeTone } from '../ui/Badge'
 import Panel, { PanelEmpty } from '../ui/Panel'
 import SegmentedControl from '../ui/SegmentedControl'
-import { Gauge, JobProgress, MaintenanceBadge, SeverityBadge, Stat } from './MachineBits'
+import StatTile from '../ui/StatTile'
+import { Gauge, JobProgress, MaintenanceBadge, SeverityBadge } from './MachineBits'
 import { DowntimePanel } from './MachinesListParts'
 import type { MachineDialogName } from './MachinesListParts'
 
@@ -306,9 +308,9 @@ export function OverviewTab({ machine, now, permissions, onChange, onDialog, onC
             <Gauge label="Downtime" value={machine.downtimePct} display={`${machine.downtimePct}%`} tone="bg-warning" />
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            <Stat label="Average cycle" value={`${machine.avgCycleMin} min`} note={`Rated ${machine.specs.cycleMin} min`} />
-            <Stat label="Energy this month" value={`${machine.energyKwh.toLocaleString('en-US')} kWh`} />
-            <Stat label="Water this month" value={`${machine.waterUsedL.toLocaleString('en-US')} L`} />
+            <StatTile label="Average cycle" value={`${machine.avgCycleMin} min`} note={`Rated ${machine.specs.cycleMin} min`} />
+            <StatTile label="Energy this month" value={`${machine.energyKwh.toLocaleString('en-US')} kWh`} />
+            <StatTile label="Water this month" value={`${machine.waterUsedL.toLocaleString('en-US')} L`} />
           </div>
         </Panel>
       </div>
@@ -343,14 +345,14 @@ export function MaintenanceTab({ machine, now, permissions, onChange, onDialog }
         }
       >
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          <Stat label="Last maintenance" value={machine.lastMaintenanceAt ? formatDay(machine.lastMaintenanceAt, true) : 'None yet'} />
-          <Stat label="Next maintenance" value={formatDay(machine.nextMaintenanceAt, true)} note={getMaintenance(machine, now).label} />
+          <StatTile label="Last maintenance" value={machine.lastMaintenanceAt ? formatDay(machine.lastMaintenanceAt, true) : 'None yet'} />
+          <StatTile label="Next maintenance" value={formatDay(machine.nextMaintenanceAt, true)} note={getMaintenance(machine, now).label} />
           <div className="rounded-lg bg-field px-3 py-2">
             <p className="text-[10px] font-semibold text-muted">Status</p>
             <div className="mt-1"><MaintenanceBadge machine={machine} now={now} /></div>
           </div>
-          <Stat label="Frequency" value={`Every ${machine.maintenanceEveryDays} days`} />
-          <Stat label="Technician" value={machine.technician || 'Not assigned'} />
+          <StatTile label="Frequency" value={`Every ${machine.maintenanceEveryDays} days`} />
+          <StatTile label="Technician" value={machine.technician || 'Not assigned'} />
         </div>
       </Panel>
 
@@ -423,8 +425,20 @@ export function MaintenanceTab({ machine, now, permissions, onChange, onDialog }
 
 // ---------- Faults ----------
 
+function ResolveFaultForm({ onSave, onCancel }: { onSave: (text: string) => void; onCancel: () => void }) {
+  const { register, handleSubmit, control } = useForm<{ text: string }>({ defaultValues: { text: '' } })
+  const text = useWatch({ control, name: 'text' })
+  return (
+    <form className="mt-2 flex flex-wrap gap-2" onSubmit={handleSubmit((values) => onSave(values.text.trim()))}>
+      <input autoFocus aria-label="What fixed it" placeholder="What fixed it?" {...register('text', { validate: (value) => value.trim() !== '' })} className={`${fieldClass} min-w-40 flex-1 bg-white`} />
+      <button type="submit" disabled={!text.trim()} className={primaryButton}>Save resolution</button>
+      <button type="button" onClick={onCancel} className={secondaryButton}>Cancel</button>
+    </form>
+  )
+}
+
 export function FaultsTab({ machine, permissions, onChange, onDialog }: MachineTabProps) {
-  const [resolving, setResolving] = useState<{ id: string; text: string } | null>(null)
+  const [resolvingId, setResolvingId] = useState<string | null>(null)
   return (
     <Panel
       title="Fault History"
@@ -458,23 +472,16 @@ export function FaultsTab({ machine, permissions, onChange, onDialog }: MachineT
                 </p>
                 {fault.resolution && <p className="mt-1 text-[11px] text-ink"><span className="font-semibold">Resolution:</span> {fault.resolution}</p>}
                 {open && permissions.maintain && (
-                  resolving?.id === fault.id ? (
-                    <form
-                      className="mt-2 flex flex-wrap gap-2"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        const text = resolving.text.trim()
-                        if (!text) return
+                  resolvingId === fault.id ? (
+                    <ResolveFaultForm
+                      onCancel={() => setResolvingId(null)}
+                      onSave={(text) => {
                         onChange((current) => resolveFault(current, fault.id, text, CURRENT_USER), `${fault.type} resolved`)
-                        setResolving(null)
+                        setResolvingId(null)
                       }}
-                    >
-                      <input autoFocus aria-label="What fixed it" placeholder="What fixed it?" value={resolving.text} onChange={(event) => setResolving({ ...resolving, text: event.target.value })} className={`${fieldClass} min-w-40 flex-1 bg-white`} />
-                      <button type="submit" disabled={!resolving.text.trim()} className={primaryButton}>Save resolution</button>
-                      <button type="button" onClick={() => setResolving(null)} className={secondaryButton}>Cancel</button>
-                    </form>
+                    />
                   ) : (
-                    <button type="button" onClick={() => setResolving({ id: fault.id, text: '' })} className={`${secondaryButton} mt-2 h-8`}>
+                    <button type="button" onClick={() => setResolvingId(fault.id)} className={`${secondaryButton} mt-2 h-8`}>
                       Mark resolved
                     </button>
                   )
@@ -506,12 +513,12 @@ export function AnalyticsTab({ machine, machines, permissions }: MachineTabProps
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel title="Energy & Resources" subtitle="Per cycle, against other machines of the same type">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <Stat label="Energy per cycle" value={`${machine.energyPerCycle} kWh`} note={`${energyDelta >= 0 ? '+' : '−'}${Math.abs(energyDelta).toFixed(0)}% vs similar`} />
-            <Stat label="Water per cycle" value={`${machine.specs.waterL} L`} />
-            <Stat label="Utilities per cycle" value={formatXaf(costs.energyCostPerCycle + costs.waterCostPerCycle)} note="Energy + water" />
-            <Stat label="Energy this month" value={`${machine.energyKwh.toLocaleString('en-US')} kWh`} />
-            <Stat label="Water this month" value={`${machine.waterUsedL.toLocaleString('en-US')} L`} />
-            <Stat label="Total cycles" value={machine.totalCycles.toLocaleString('en-US')} />
+            <StatTile label="Energy per cycle" value={`${machine.energyPerCycle} kWh`} note={`${energyDelta >= 0 ? '+' : '−'}${Math.abs(energyDelta).toFixed(0)}% vs similar`} />
+            <StatTile label="Water per cycle" value={`${machine.specs.waterL} L`} />
+            <StatTile label="Utilities per cycle" value={formatXaf(costs.energyCostPerCycle + costs.waterCostPerCycle)} note="Energy + water" />
+            <StatTile label="Energy this month" value={`${machine.energyKwh.toLocaleString('en-US')} kWh`} />
+            <StatTile label="Water this month" value={`${machine.waterUsedL.toLocaleString('en-US')} L`} />
+            <StatTile label="Total cycles" value={machine.totalCycles.toLocaleString('en-US')} />
           </div>
           {energyDelta >= 15 && (
             <p className="mt-3 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-ink">
@@ -536,10 +543,10 @@ export function AnalyticsTab({ machine, machines, permissions }: MachineTabProps
               ))}
             </ul>
             <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <Stat label="Total cost" value={formatCompactXaf(costs.total)} />
-              <Stat label="Revenue generated" value={formatCompactXaf(machine.revenue)} />
-              <Stat label="Contribution" value={formatCompactXaf(Math.max(0, costs.contribution))} note="Revenue − running costs" />
-              <Stat label="Return on investment" value={`${costs.roi.toFixed(0)}%`} note={`${formatXaf(costs.costPerCycle)} / cycle`} />
+              <StatTile label="Total cost" value={formatCompactXaf(costs.total)} />
+              <StatTile label="Revenue generated" value={formatCompactXaf(machine.revenue)} />
+              <StatTile label="Contribution" value={formatCompactXaf(Math.max(0, costs.contribution))} note="Revenue − running costs" />
+              <StatTile label="Return on investment" value={`${costs.roi.toFixed(0)}%`} note={`${formatXaf(costs.costPerCycle)} / cycle`} />
             </dl>
           </Panel>
         )}

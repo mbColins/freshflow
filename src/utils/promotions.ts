@@ -19,6 +19,7 @@ import type {
 import { parseCsv } from './customers'
 import { formatXaf } from './orders'
 import { getSettings } from '../hooks/useSettings'
+import { csvCell } from './csv'
 import { formatDateSetting } from './settings'
 
 const DAY_MS = 86_400_000
@@ -236,11 +237,6 @@ export function comparePromotions(a: Promotion, b: Promotion, key: PromotionSort
     case 'discount':
       return a.stats.discount - b.stats.discount
   }
-}
-
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 export function promotionsToCsv(promotions: Promotion[], now: number, includeFinancials: boolean) {

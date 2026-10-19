@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import {
   CalendarClock,
   CircleCheck,
@@ -25,17 +26,12 @@ import type {
 } from '../../types/logistics'
 import { formatXaf } from '../../utils/orders'
 import { formatClock, getReadyMinutes, formatMinutes, isClosed } from '../../utils/logistics'
-import {
-  dangerButton,
-  fieldClass,
-  labelClass,
-  primaryButton,
-  secondaryButton,
-  sectionTitle,
-} from '../orders/styles'
+import { dangerButton, fieldClass, labelClass, primaryButton, secondaryButton } from '../orders/styles'
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
 import { JobPriorityBadge, JobStatusBadge } from './LogisticsBits'
+import { DetailBox, DrawerSection } from '../ui/Details'
+import { toLocalInput } from '../../utils/dates'
 
 type JobDrawerProps = {
   job: DispatchJob | null
@@ -49,35 +45,170 @@ type JobDrawerProps = {
   onReschedule: (id: string, when: string, notify: boolean) => void
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h3 className={sectionTitle}>{title}</h3>
-      <div className="mt-2">{children}</div>
-    </section>
-  )
-}
-
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-field p-3 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-function toLocalInput(time: number) {
-  const date = new Date(time)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
 type Mode = 'view' | 'proof' | 'fail' | 'reschedule'
+
+function ProofForm({
+  defaultRecipient,
+  onBack,
+  onSubmit,
+}: {
+  defaultRecipient: string
+  onBack: () => void
+  onSubmit: (proof: { recipient: string; method: string }) => void
+}) {
+  const { register, handleSubmit, control } = useForm({
+    defaultValues: { recipient: defaultRecipient, method: PROOF_METHODS[0] },
+  })
+  const recipient = useWatch({ control, name: 'recipient' })
+  return (
+    <form
+      onSubmit={handleSubmit(({ recipient, method }) => onSubmit({ recipient: recipient.trim(), method }))}
+      className="space-y-3 rounded-lg bg-field p-3"
+    >
+      <p className="text-xs font-bold text-ink">Proof of delivery</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="pod-recipient" className={labelClass}>
+            Recipient name
+          </label>
+          <input
+            id="pod-recipient"
+            {...register('recipient', { validate: (value) => value.trim() !== '' })}
+            className={`${fieldClass} bg-white`}
+          />
+        </div>
+        <div>
+          <label htmlFor="pod-method" className={labelClass}>
+            Verification
+          </label>
+          <select id="pod-method" {...register('method')} className={`${fieldClass} bg-white`}>
+            {PROOF_METHODS.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={!recipient.trim()} className={primaryButton}>
+          <CircleCheck className="size-4" aria-hidden="true" />
+          Confirm Delivered
+        </button>
+        <button type="button" onClick={onBack} className={secondaryButton}>
+          Back
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function FailForm({
+  onBack,
+  onSubmit,
+}: {
+  onBack: () => void
+  onSubmit: (failure: { reason: string; notes: string; nextAction: string }) => void
+}) {
+  const { register, handleSubmit, control } = useForm({
+    defaultValues: { reason: FAILURE_REASONS[0], notes: '', nextAction: FAILURE_NEXT_ACTIONS[0] },
+  })
+  const notes = useWatch({ control, name: 'notes' })
+  return (
+    <form
+      onSubmit={handleSubmit((failure) => onSubmit({ ...failure, notes: failure.notes.trim() }))}
+      className="space-y-3 rounded-lg bg-danger/5 p-3 ring-1 ring-danger/20"
+    >
+      <p className="text-xs font-bold text-ink">Report a failed attempt</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="fail-reason" className={labelClass}>
+            Reason
+          </label>
+          <select id="fail-reason" {...register('reason')} className={`${fieldClass} bg-white`}>
+            {FAILURE_REASONS.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="fail-next" className={labelClass}>
+            Next action
+          </label>
+          <select id="fail-next" {...register('nextAction')} className={`${fieldClass} bg-white`}>
+            {FAILURE_NEXT_ACTIONS.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        <div className="sm:col-span-2">
+          <label htmlFor="fail-notes" className={labelClass}>
+            Driver notes, including contact attempts (required)
+          </label>
+          <textarea
+            id="fail-notes"
+            rows={2}
+            {...register('notes', { validate: (value) => value.trim() !== '' })}
+            className={`${fieldClass} h-auto bg-white py-2`}
+          />
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={!notes.trim()} className={dangerButton}>
+          Mark as Failed
+        </button>
+        <button type="button" onClick={onBack} className={secondaryButton}>
+          Back
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function RescheduleForm({
+  onBack,
+  onSubmit,
+}: {
+  onBack: () => void
+  // `when` as an ISO timestamp
+  onSubmit: (when: string, notify: boolean) => void
+}) {
+  // Lazy so the default time is read once, not on every render
+  const [defaultWhen] = useState(() => toLocalInput(Date.now() + 3 * 3_600_000))
+  const { register, handleSubmit, control } = useForm({
+    defaultValues: { when: defaultWhen, notify: true },
+  })
+  const when = useWatch({ control, name: 'when' })
+  return (
+    <form
+      onSubmit={handleSubmit((values) => onSubmit(new Date(values.when).toISOString(), values.notify))}
+      className="space-y-3 rounded-lg bg-field p-3"
+    >
+      <p className="text-xs font-bold text-ink">Reschedule</p>
+      <div>
+        <label htmlFor="reschedule-when" className={labelClass}>
+          New date and time
+        </label>
+        <input
+          id="reschedule-when"
+          type="datetime-local"
+          {...register('when', { required: true })}
+          className={`${fieldClass} bg-white sm:w-64`}
+        />
+      </div>
+      <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink">
+        <input type="checkbox" {...register('notify')} className="size-4 accent-brand" />
+        Notify customer about the new time
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={!when} className={primaryButton}>
+          Save New Time
+        </button>
+        <button type="button" onClick={onBack} className={secondaryButton}>
+          Back
+        </button>
+      </div>
+    </form>
+  )
+}
 
 function JobActions({
   job,
@@ -92,172 +223,32 @@ function JobActions({
   hasDriver: boolean
 }) {
   const [mode, setMode] = useState<Mode>('view')
-  const [recipient, setRecipient] = useState(job.customer)
-  const [method, setMethod] = useState(PROOF_METHODS[0])
-  const [reason, setReason] = useState(FAILURE_REASONS[0])
-  const [notes, setNotes] = useState('')
-  const [nextAction, setNextAction] = useState(FAILURE_NEXT_ACTIONS[0])
-  const [when, setWhen] = useState(() => toLocalInput(Date.now() + 3 * 3_600_000))
-  const [notify, setNotify] = useState(true)
 
   const flow = job.type === 'pickup' ? PICKUP_FLOW : DELIVERY_FLOW
   const current = job.status === 'arrived' ? 'enRoute' : job.status
   const next = flow[flow.indexOf(current) + 1] as JobStatus | undefined
   const closed = isClosed(job)
   const onTheRoad = job.status === 'enRoute' || job.status === 'arrived'
-  const submit = (action: () => void) => (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    action()
-  }
+  const back = () => setMode('view')
 
   if (mode === 'proof') {
     return (
-      <form
-        onSubmit={submit(() => onComplete(job.id, { recipient: recipient.trim(), method }))}
-        className="space-y-3 rounded-lg bg-field p-3"
-      >
-        <p className="text-xs font-bold text-ink">Proof of delivery</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="pod-recipient" className={labelClass}>
-              Recipient name
-            </label>
-            <input
-              id="pod-recipient"
-              value={recipient}
-              onChange={(event) => setRecipient(event.target.value)}
-              className={`${fieldClass} bg-white`}
-            />
-          </div>
-          <div>
-            <label htmlFor="pod-method" className={labelClass}>
-              Verification
-            </label>
-            <select
-              id="pod-method"
-              value={method}
-              onChange={(event) => setMethod(event.target.value)}
-              className={`${fieldClass} bg-white`}
-            >
-              {PROOF_METHODS.map((option) => (
-                <option key={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="submit" disabled={!recipient.trim()} className={primaryButton}>
-            <CircleCheck className="size-4" aria-hidden="true" />
-            Confirm Delivered
-          </button>
-          <button type="button" onClick={() => setMode('view')} className={secondaryButton}>
-            Back
-          </button>
-        </div>
-      </form>
+      <ProofForm
+        defaultRecipient={job.customer}
+        onBack={back}
+        onSubmit={(proof) => onComplete(job.id, proof)}
+      />
     )
   }
-
   if (mode === 'fail') {
-    return (
-      <form
-        onSubmit={submit(() => onFail(job.id, { reason, notes: notes.trim(), nextAction }))}
-        className="space-y-3 rounded-lg bg-danger/5 p-3 ring-1 ring-danger/20"
-      >
-        <p className="text-xs font-bold text-ink">Report a failed attempt</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <label htmlFor="fail-reason" className={labelClass}>
-              Reason
-            </label>
-            <select
-              id="fail-reason"
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              className={`${fieldClass} bg-white`}
-            >
-              {FAILURE_REASONS.map((option) => (
-                <option key={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="fail-next" className={labelClass}>
-              Next action
-            </label>
-            <select
-              id="fail-next"
-              value={nextAction}
-              onChange={(event) => setNextAction(event.target.value)}
-              className={`${fieldClass} bg-white`}
-            >
-              {FAILURE_NEXT_ACTIONS.map((option) => (
-                <option key={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-          <div className="sm:col-span-2">
-            <label htmlFor="fail-notes" className={labelClass}>
-              Driver notes, including contact attempts (required)
-            </label>
-            <textarea
-              id="fail-notes"
-              rows={2}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              className={`${fieldClass} h-auto bg-white py-2`}
-            />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="submit" disabled={!notes.trim()} className={dangerButton}>
-            Mark as Failed
-          </button>
-          <button type="button" onClick={() => setMode('view')} className={secondaryButton}>
-            Back
-          </button>
-        </div>
-      </form>
-    )
+    return <FailForm onBack={back} onSubmit={(failure) => onFail(job.id, failure)} />
   }
-
   if (mode === 'reschedule') {
     return (
-      <form
-        onSubmit={submit(() => onReschedule(job.id, new Date(when).toISOString(), notify))}
-        className="space-y-3 rounded-lg bg-field p-3"
-      >
-        <p className="text-xs font-bold text-ink">Reschedule</p>
-        <div>
-          <label htmlFor="reschedule-when" className={labelClass}>
-            New date and time
-          </label>
-          <input
-            id="reschedule-when"
-            type="datetime-local"
-            value={when}
-            onChange={(event) => setWhen(event.target.value)}
-            className={`${fieldClass} bg-white sm:w-64`}
-          />
-        </div>
-        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink">
-          <input
-            type="checkbox"
-            checked={notify}
-            onChange={(event) => setNotify(event.target.checked)}
-            className="size-4 accent-brand"
-          />
-          Notify customer about the new time
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <button type="submit" disabled={!when} className={primaryButton}>
-            Save New Time
-          </button>
-          <button type="button" onClick={() => setMode('view')} className={secondaryButton}>
-            Back
-          </button>
-        </div>
-      </form>
+      <RescheduleForm
+        onBack={back}
+        onSubmit={(when, notify) => onReschedule(job.id, when, notify)}
+      />
     )
   }
 
@@ -382,8 +373,8 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
             </div>
           )}
 
-          <Section title="Customer">
-            <Rows
+          <DrawerSection title="Customer">
+            <DetailBox
               rows={[
                 ['Name', job.customer],
                 ['Phone', job.phone],
@@ -414,10 +405,10 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
                 </a>
               </div>
             </div>
-          </Section>
+          </DrawerSection>
 
-          <Section title="Order">
-            <Rows
+          <DrawerSection title="Order">
+            <DetailBox
               rows={[
                 ['Order number', job.orderId],
                 ['Manifest', job.manifest],
@@ -429,10 +420,10 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
                   : []),
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title={job.type === 'pickup' ? 'Pickup address' : 'Delivery address'}>
-            <Rows
+          <DrawerSection title={job.type === 'pickup' ? 'Pickup address' : 'Delivery address'}>
+            <DetailBox
               rows={[
                 ['Address', job.address],
                 ['Zone', job.zone],
@@ -440,10 +431,10 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
                 ['Customer instructions', job.instructions || 'None'],
               ]}
             />
-          </Section>
+          </DrawerSection>
 
-          <Section title="Driver & schedule">
-            <Rows
+          <DrawerSection title="Driver & schedule">
+            <DetailBox
               rows={[
                 ['Driver', driver?.name ?? 'Unassigned'],
                 ['Vehicle', driver?.vehicle ?? '—'],
@@ -464,9 +455,9 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
                 Call Driver
               </a>
             )}
-          </Section>
+          </DrawerSection>
 
-          <Section title="Timeline">
+          <DrawerSection title="Timeline">
             <ol className="space-y-3 border-l border-line pl-4">
               {job.timeline.map((entry, index) => (
                 <li key={entry.at + index} className="relative text-xs">
@@ -476,7 +467,7 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
                 </li>
               ))}
             </ol>
-          </Section>
+          </DrawerSection>
         </div>
       )}
     </Modal>

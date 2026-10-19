@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { Printer, ScanLine } from 'lucide-react'
 import { NOTIFICATION_EVENTS } from '../../constants/orders'
 import useLocalStorage from '../../hooks/useLocalStorage'
@@ -74,12 +73,20 @@ export function ScanOrderDialog({
   onClose: () => void
   onFind: (code: string) => boolean
 }) {
-  const [code, setCode] = useState('')
-  const [notFound, setNotFound] = useState(false)
+  const {
+    register,
+    handleSubmit,
+    control,
+    setError,
+    clearErrors,
+    formState: { errors },
+  } = useForm<{ code: string }>({ defaultValues: { code: '' } })
+  const code = useWatch({ control, name: 'code' })
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setNotFound(!onFind(code))
+  function onSubmit(values: { code: string }) {
+    if (!onFind(values.code)) {
+      setError('code', { message: `No order found for “${values.code}”.` })
+    }
   }
 
   return (
@@ -90,7 +97,7 @@ export function ScanOrderDialog({
       title="Scan Order"
       subtitle="Scan a tag with a barcode scanner, or type the order number."
     >
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
         <div>
           <label htmlFor="scan-code" className={labelClass}>
             Order reference
@@ -105,12 +112,11 @@ export function ScanOrderDialog({
               autoFocus
               autoComplete="off"
               placeholder="e.g. ORD-10452"
-              value={code}
-              onChange={(event) => {
-                setCode(event.target.value)
-                setNotFound(false)
-              }}
-              aria-invalid={notFound}
+              {...register('code', {
+                validate: (value) => value.trim() !== '',
+                onChange: () => clearErrors('code'),
+              })}
+              aria-invalid={Boolean(errors.code?.message)}
               aria-describedby="scan-error"
               className={`${fieldClass} pl-9 font-mono`}
             />
@@ -120,7 +126,7 @@ export function ScanOrderDialog({
             role="alert"
             className="mt-1 min-h-4 text-[11px] font-semibold text-danger"
           >
-            {notFound && `No order found for “${code}”.`}
+            {errors.code?.message}
           </p>
         </div>
         <button

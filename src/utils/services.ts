@@ -4,6 +4,7 @@ import type {
   LaundryService,
   ServiceFilters,
 } from '../types/service'
+import { toCsv } from './csv'
 import { formatXaf } from './orders'
 
 export function formatPrice(service: LaundryService) {
@@ -194,12 +195,5 @@ export function servicesToCsv(services: LaundryService[], includeFinancials: boo
       ['Revenue (XAF)', (service) => service.stats.revenue],
     )
   }
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...services.map((service) =>
-      columns.map(([, read]) => escape(read(service))).join(','),
-    ),
-  ].join('\r\n')
+  return toCsv(columns, services)
 }

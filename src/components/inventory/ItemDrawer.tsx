@@ -20,6 +20,7 @@ import Modal from '../ui/Modal'
 import SegmentedControl from '../ui/SegmentedControl'
 import { StockGauge, StockStatusBadge } from './InventoryBits'
 import type { StockAction } from './InventoryTable'
+import { DetailBox } from '../ui/Details'
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
@@ -29,19 +30,6 @@ const TABS = [
 ] as const
 
 type Tab = (typeof TABS)[number]['value']
-
-function Rows({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-field p-3 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
 
 type ItemDrawerProps = {
   item: InventoryItem | null
@@ -142,7 +130,7 @@ function ItemDrawer({ item, movements, now, permissions, onClose, onStock }: Ite
               <section>
                 <h3 className={sectionTitle}>Details</h3>
                 <div className="mt-2">
-                  <Rows
+                  <DetailBox
                     rows={[
                       ['Description', item.description || 'No description'],
                       ['Unit of measurement', item.unit],
@@ -176,7 +164,7 @@ function ItemDrawer({ item, movements, now, permissions, onClose, onStock }: Ite
 
           {tab === 'forecast' && (
             <div className="space-y-3">
-              <Rows
+              <DetailBox
                 rows={[
                   ['Average daily consumption', item.dailyUse > 0 ? `${formatQty(item.dailyUse, item.unit)} / day` : 'No regular use'],
                   [
@@ -208,7 +196,7 @@ function ItemDrawer({ item, movements, now, permissions, onClose, onStock }: Ite
           )}
 
           {tab === 'batch' && (
-            <Rows
+            <DetailBox
               rows={[
                 ['Batch / lot', item.batch],
                 ['Expiration', item.expiresAt ? formatDate(item.expiresAt) : 'Not tracked'],

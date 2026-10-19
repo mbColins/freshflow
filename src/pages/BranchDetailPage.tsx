@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ArrowLeft, Clock, Cpu, Ellipsis, MapPin, Pencil, Phone, TriangleAlert, Users } from 'lucide-react'
 import { BranchArt, BranchStatusBadge, HealthMeter } from '../components/branches/BranchBits'
 import {
@@ -28,7 +28,10 @@ import {
   MACHINE_TYPES,
   STAFF_ROLES,
 } from '../constants/branches'
-import useBranches, { branchStore } from '../hooks/useBranches'
+import { useBranchesQuery, useChangeBranch } from '../hooks/useBranches'
+import useDeleteBranch from '../hooks/useDeleteBranch'
+import useSaveBranch from '../hooks/useSaveBranch'
+import { useGetBranchQuery } from '../services/branchApi'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
 import type { BranchStatus } from '../types/branch'
@@ -57,13 +60,22 @@ function BranchDetailPage() {
   const { branchId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const now = useNow()
-  const branches = useBranches()
-  const branch = branches.find(({ id }) => id === branchId)
+  const navigate = useNavigate()
+  const { data, isLoading } = useBranchesQuery()
+  // The URL carries the BR-001 code; the API addresses branches by uuid
+  const listed = data?.items.find(({ id }) => id === branchId)
+  // The latest copy from GET /branch/{uuid}; 403 when outside the caller's access
+  const single = useGetBranchQuery(listed?.uuid ?? '', { skip: !listed?.uuid })
+  const noAccess = (single.error as { status?: unknown } | undefined)?.status === 403
+  const branch = single.data ?? listed
+  const changeBranch = useChangeBranch()
+  const confirmDelete = useDeleteBranch()
   const [role] = useLocalStorage<OrderRole>('branches.role', 'admin')
   const [wizardStep, setWizardStep] = useState<number | null>(null)
   const [adding, setAdding] = useState<'staff' | 'machine' | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const { save: saveBranch, error: saveError, reset: resetSave } = useSaveBranch()
 
   const permissions = BRANCH_PERMISSIONS[role]
 
@@ -72,6 +84,28 @@ function BranchDetailPage() {
     const timer = window.setTimeout(() => setToast(null), TOAST_MS)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  if (noAccess) {
+    return (
+      <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+        <h1 className="text-sm font-bold text-ink">No access to this branch</h1>
+        <p className="text-xs text-muted">Your account can’t open {listed?.name ?? 'this branch'}. Ask an administrator for access.</p>
+        <Link to="/branches" className={`${primaryButton} mt-2`}>
+          Back to Branches
+        </Link>
+      </div>
+    )
+  }
+
+  if (isLoading || (single.isLoading && !listed)) {
+    return (
+      <div className="space-y-3" aria-busy="true">
+        <p className="sr-only" role="status">Loading branch…</p>
+        <div className="h-32 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+        <div className="h-72 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+      </div>
+    )
+  }
 
   if (!branch) {
     return (
@@ -90,9 +124,11 @@ function BranchDetailPage() {
   const ActivePanel = activeTab.panel
   const openTab = (id: string) => setSearchParams(id === 'overview' ? {} : { tab: id }, { replace: true })
 
+  // Shown at once; profile fields are saved to the backend (see useChangeBranch)
   const change: BranchTabProps['onChange'] = (apply, message) => {
-    branchStore.update(branch.id, apply)
-    setToast(message)
+    void changeBranch(branch, apply).then((ok) =>
+      setToast(ok ? message : 'The change wasn’t saved. The server refused it, try again.'),
+    )
   }
 
   function setStatus(status: BranchStatus) {
@@ -236,6 +272,22 @@ function BranchDetailPage() {
                           {value === 'inactive' ? 'Deactivate branch' : `Set to ${label}`}
                         </MenuItem>
                       ))}
+                    {permissions.manage && (
+                      <MenuItem
+                        destructive
+                        onSelect={() => {
+                          close()
+                          setConfirm(
+                            confirmDelete(branch, (message, deleted) => {
+                              if (deleted) navigate('/branches', { replace: true })
+                              else setToast(message)
+                            }),
+                          )
+                        }}
+                      >
+                        Delete branch
+                      </MenuItem>
+                    )}
                   </>
                 )}
               </Menu>
@@ -328,9 +380,14 @@ function BranchDetailPage() {
           initial={branch}
           initialStep={wizardStep}
           takenCodes={[]}
-          onClose={() => setWizardStep(null)}
-          onSave={(profile) => {
-            branchStore.update(branch.id, (current) => ({ ...current, ...profile }))
+          error={saveError}
+          onClose={() => {
+            resetSave()
+            setWizardStep(null)
+          }}
+          onSave={async (profile, logo) => {
+            // The branch reloads on its own; on failure the wizard stays open with the error
+            if (!(await saveBranch(branch, profile, logo))) return
             setWizardStep(null)
             setToast(`${profile.name} updated`)
           }}

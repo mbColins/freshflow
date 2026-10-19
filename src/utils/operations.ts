@@ -13,6 +13,7 @@ import type {
   QcResult,
   StageId,
 } from '../types/operations'
+import { csvCell } from './csv'
 
 const MINUTE = 60_000
 
@@ -224,11 +225,6 @@ export function getStaffLoad(jobs: OpsJob[]) {
 // Whoever has the fewest jobs in hand
 export function recommendStaff(jobs: OpsJob[]) {
   return [...getStaffLoad(jobs)].sort((a, b) => a.activeJobs - b.activeJobs)[0]
-}
-
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 export function jobsToCsv(jobs: OpsJob[], now: number) {

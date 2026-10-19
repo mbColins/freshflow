@@ -10,6 +10,8 @@ import type {
   SegmentId,
 } from '../types/customer'
 import type { Customer, PaymentMethod } from '../types/order'
+import type { CustomerRequest, CustomerResponse } from '../services/customerApi'
+import { toCsv } from './csv'
 import { formatXaf } from './orders'
 import { getSettings } from '../hooks/useSettings'
 import { formatDateSetting } from './settings'
@@ -289,14 +291,7 @@ export function customersToCsv(
       ['Outstanding (XAF)', (customer) => customer.outstanding],
     )
   }
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...customers.map((customer) =>
-      columns.map(([, read]) => escape(read(customer))).join(','),
-    ),
-  ].join('\r\n')
+  return toCsv(columns, customers)
 }
 
 // Minimal CSV reader: handles quoted fields, escaped quotes and CRLF
@@ -387,6 +382,8 @@ export function createCustomer(
     status: 'new',
     points: 0,
     branch,
+    branchId: '',
+    referralSource: '',
     registeredAt: now,
     lastOrderAt: null,
     orders: 0,
@@ -433,6 +430,8 @@ export function createCustomer(
 // The order wizard works with the lighter customer shape used on orders
 export function toOrderCustomer(customer: CrmCustomer): Customer {
   return {
+    // The API id, so a new order can reference the customer
+    uuid: customer.id,
     name: customer.name,
     phone: customer.phone,
     email: customer.email,
@@ -449,4 +448,72 @@ export function toOrderCustomer(customer: CrmCustomer): Customer {
     orders: customer.orders,
     spent: customer.spent,
   }
+}
+
+// ---------- API ----------
+
+const text = (value: string | null | undefined) => value?.trim() ?? ''
+
+function splitName(name: string) {
+  const [first = '', ...rest] = name.trim().split(/\s+/)
+  return { firstname: first, lastname: rest.join(' ') }
+}
+
+// A customer from the API, with defaults for everything the backend doesn't
+// store (status, tags, preferences, order history…); null without an id.
+// `branch` may be empty when the response only has the branch uuid; the
+// customers hook fills the name in from the branch dropdown.
+export function customerFromApi(raw: CustomerResponse | null | undefined): CrmCustomer | null {
+  const id = raw?.uuid ?? raw?.id
+  if (!raw || id === undefined || id === null || id === '') return null
+  const branch = typeof raw.branch === 'object' && raw.branch ? raw.branch : null
+  const branchId = raw.branchId ?? branch?.uuid ?? branch?.id
+  const name = `${text(raw.firstname)} ${text(raw.lastname)}`.trim()
+  const customer = createCustomer(
+    String(id),
+    { name: name || text(raw.phoneNumber), phone: text(raw.phoneNumber), email: text(raw.email), street: text(raw.homeAddress) },
+    text(raw.branchName) || text(branch?.name) || (typeof raw.branch === 'string' ? raw.branch : ''),
+    '',
+  )
+  const [address] = customer.addresses
+  return {
+    ...customer,
+    status: 'active',
+    tags: [],
+    points: raw.loyaltyPoints ?? 0,
+    branchId: branchId === undefined || branchId === null ? '' : String(branchId),
+    referralSource: text(raw.referralSource),
+    registeredAt: raw.createdAt ?? customer.registeredAt,
+    activity: [],
+    // homeAddress and neighbourhood are the default address's street and landmark
+    addresses: address
+      ? [{ ...address, landmark: text(raw.neighbourhood) }]
+      : raw.neighbourhood
+        ? [{ id: 'address-1', label: 'Home', street: '', city: '', region: '', landmark: text(raw.neighbourhood), instructions: '', isDefault: true }]
+        : [],
+  }
+}
+
+// The CustomerRequest body for a customer; `branchId` is the branch's uuid
+export function customerRequest(customer: CrmCustomer, branchId: string): CustomerRequest {
+  const address = customer.addresses.find(({ isDefault }) => isDefault) ?? customer.addresses[0]
+  return {
+    ...splitName(customer.name),
+    phoneNumber: customer.phone,
+    email: customer.email,
+    homeAddress: address?.street ?? '',
+    neighbourhood: address?.landmark ?? '',
+    loyaltyPoints: customer.points,
+    branchId,
+    referralSource: customer.referralSource,
+  }
+}
+
+// The CustomerRequest fields that differ between two versions, for a PATCH
+export function changedCustomerFields(before: CustomerRequest, after: CustomerRequest): Partial<CustomerRequest> {
+  const changes: Partial<CustomerRequest> = {}
+  for (const key of Object.keys(after) as (keyof CustomerRequest)[]) {
+    if (before[key] !== after[key]) Object.assign(changes, { [key]: after[key] })
+  }
+  return changes
 }

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Check, Plus, Send, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
 import { BRANCH_SERVICES } from '../../constants/branches'
 import {
@@ -36,18 +35,7 @@ import {
 } from '../orders/styles'
 import Modal from '../ui/Modal'
 import { PromotionCode } from './PromotionBits'
-
-function Field({ label, htmlFor, wide = false, hint, children }: { label: string; htmlFor: string; wide?: boolean; hint?: string; children: ReactNode }) {
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-      {hint && <p className="mt-1 text-[11px] text-muted">{hint}</p>}
-    </div>
-  )
-}
+import FormField from '../ui/FormField'
 
 const checkRow = 'flex cursor-pointer items-center gap-2 rounded-md bg-field px-3 py-2 text-xs font-medium text-ink'
 
@@ -83,7 +71,7 @@ function PromotionWizard({
   const startsLater = draft.startAt > toDateKey(now)
 
   const optionalNumber = (id: string, label: string, key: 'maxDiscount' | 'usageLimit' | 'perCustomerLimit' | 'budget', hint: string) => (
-    <Field label={label} htmlFor={id} hint={hint}>
+    <FormField label={label} htmlFor={id} hint={hint}>
       <input
         id={id}
         type="number"
@@ -93,7 +81,7 @@ function PromotionWizard({
         onChange={(event) => patch({ [key]: event.target.value === '' ? null : Math.max(1, Number(event.target.value)) })}
         className={fieldClass}
       />
-    </Field>
+    </FormField>
   )
 
   function chooseType(type: PromotionType) {
@@ -180,10 +168,10 @@ function PromotionWizard({
 
       {step === 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Promotion name" htmlFor="promo-name">
+          <FormField label="Promotion name" htmlFor="promo-name">
             <input id="promo-name" autoComplete="off" placeholder="e.g. Weekend Fresh" value={draft.name} onChange={(event) => patch({ name: event.target.value })} className={fieldClass} />
-          </Field>
-          <Field label="Promotion code" htmlFor="promo-code" hint={draft.automatic ? 'Applied at checkout without a code.' : 'What customers type or staff enter at the counter.'}>
+          </FormField>
+          <FormField label="Promotion code" htmlFor="promo-code" hint={draft.automatic ? 'Applied at checkout without a code.' : 'What customers type or staff enter at the counter.'}>
             <div className="flex gap-2">
               <input
                 id="promo-code"
@@ -205,7 +193,7 @@ function PromotionWizard({
                 Suggest
               </button>
             </div>
-          </Field>
+          </FormField>
           <label className={`${checkRow} sm:col-span-2`}>
             <input
               type="checkbox"
@@ -215,12 +203,12 @@ function PromotionWizard({
             />
             Automatic promotion: apply to every eligible order without a code
           </label>
-          <Field label="Description (shown to customers)" htmlFor="promo-description" wide>
+          <FormField label="Description (shown to customers)" htmlFor="promo-description" wide>
             <textarea id="promo-description" rows={2} placeholder="e.g. 20% off Wash & Fold every weekend." value={draft.description} onChange={(event) => patch({ description: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-          </Field>
-          <Field label="Internal notes (staff only)" htmlFor="promo-notes" wide>
+          </FormField>
+          <FormField label="Internal notes (staff only)" htmlFor="promo-notes" wide>
             <textarea id="promo-notes" rows={2} value={draft.notes} onChange={(event) => patch({ notes: event.target.value })} className={`${fieldClass} h-auto py-2`} />
-          </Field>
+          </FormField>
           <div className="sm:col-span-2">
             <p className={labelClass}>Campaign banner</p>
             <div role="radiogroup" aria-label="Campaign banner" className="flex flex-wrap gap-2">
@@ -270,7 +258,7 @@ function PromotionWizard({
       {step === 2 && (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="How the discount is calculated" htmlFor="promo-kind">
+            <FormField label="How the discount is calculated" htmlFor="promo-kind">
               <select
                 id="promo-kind"
                 value={draft.discountKind}
@@ -282,9 +270,9 @@ function PromotionWizard({
                   <option key={kind} value={kind}>{DISCOUNT_KIND_LABELS[kind]}</option>
                 ))}
               </select>
-            </Field>
+            </FormField>
             {(draft.discountKind === 'percent' || draft.discountKind === 'amount') && (
-              <Field label={draft.discountKind === 'percent' ? 'Percentage off (%)' : 'Amount off (XAF)'} htmlFor="promo-value">
+              <FormField label={draft.discountKind === 'percent' ? 'Percentage off (%)' : 'Amount off (XAF)'} htmlFor="promo-value">
                 <input
                   id="promo-value"
                   type="number"
@@ -295,14 +283,14 @@ function PromotionWizard({
                   onChange={(event) => patch({ value: Number(event.target.value) })}
                   className={fieldClass}
                 />
-              </Field>
+              </FormField>
             )}
             {draft.discountKind !== 'freeDelivery' && draft.discountKind !== 'amount' &&
               optionalNumber('promo-max', 'Maximum discount per order (XAF)', 'maxDiscount', 'Caps what a single large order can take off.')}
             {draft.type === 'bundle' && (
-              <Field label="What the bundle contains" htmlFor="promo-bundle" wide>
+              <FormField label="What the bundle contains" htmlFor="promo-bundle" wide>
                 <input id="promo-bundle" placeholder="e.g. 2 suits + 3 pressed shirts" value={draft.bundleNote} onChange={(event) => patch({ bundleNote: event.target.value })} className={fieldClass} />
-              </Field>
+              </FormField>
             )}
           </div>
           {draft.discountKind === 'freeDelivery' && (
@@ -350,17 +338,17 @@ function PromotionWizard({
       {step === 3 && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Who can use it" htmlFor="promo-audience">
+            <FormField label="Who can use it" htmlFor="promo-audience">
               <select id="promo-audience" value={draft.audience} onChange={(event) => patch({ audience: event.target.value as Audience })} className={fieldClass}>
                 {AUDIENCES.map(({ value, label }) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
-            </Field>
+            </FormField>
             {draft.audience === 'specific' && (
-              <Field label="Customers (names or phone numbers, comma separated)" htmlFor="promo-customers">
+              <FormField label="Customers (names or phone numbers, comma separated)" htmlFor="promo-customers">
                 <input id="promo-customers" value={draft.customers} onChange={(event) => patch({ customers: event.target.value })} className={fieldClass} />
-              </Field>
+              </FormField>
             )}
           </div>
           <div>
@@ -412,9 +400,9 @@ function PromotionWizard({
             )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Minimum order (XAF)" htmlFor="promo-min" hint="0 means no minimum.">
+            <FormField label="Minimum order (XAF)" htmlFor="promo-min" hint="0 means no minimum.">
               <input id="promo-min" type="number" min={0} step={500} value={draft.minOrder} onChange={(event) => patch({ minOrder: Math.max(0, Number(event.target.value)) })} className={fieldClass} />
-            </Field>
+            </FormField>
           </div>
           <label className={checkRow}>
             <input type="checkbox" checked={draft.stackable} onChange={(event) => patch({ stackable: event.target.checked })} className="size-4 accent-brand" />
@@ -426,12 +414,12 @@ function PromotionWizard({
       {step === 5 && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Start date" htmlFor="promo-start">
+            <FormField label="Start date" htmlFor="promo-start">
               <input id="promo-start" type="date" value={draft.startAt} onChange={(event) => patch({ startAt: event.target.value })} className={fieldClass} />
-            </Field>
-            <Field label="End date" htmlFor="promo-end">
+            </FormField>
+            <FormField label="End date" htmlFor="promo-end">
               <input id="promo-end" type="date" disabled={draft.endAt === null} min={draft.startAt} value={draft.endAt ?? ''} onChange={(event) => patch({ endAt: event.target.value || draft.startAt })} className={`${fieldClass} disabled:opacity-60`} />
-            </Field>
+            </FormField>
           </div>
           <label className={checkRow}>
             <input type="checkbox" checked={draft.endAt === null} onChange={(event) => patch({ endAt: event.target.checked ? null : draft.startAt })} className="size-4 accent-brand" />

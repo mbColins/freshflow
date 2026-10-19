@@ -6,6 +6,7 @@ import type { PayMethod, Transaction } from '../../types/payment'
 import { formatXaf } from '../../utils/orders'
 import { getCollected, isCollected, sum } from '../../utils/payments'
 import SegmentedControl from '../ui/SegmentedControl'
+import { getTickStep } from '../../utils/charts'
 
 const RANGES = [
   { value: 'today', label: 'Today' },
@@ -27,13 +28,6 @@ const PLOT_HEIGHT = HEIGHT - MARGIN.top - MARGIN.bottom
 const BASELINE = MARGIN.top + PLOT_HEIGHT
 const CURRENT = '#2563eb'
 const PREVIOUS = '#94a3b8'
-
-function getTickStep(max: number) {
-  const rough = Math.max(max, 1) / 4
-  const magnitude = 10 ** Math.floor(Math.log10(rough))
-  const multiple = [1, 2, 2.5, 5, 10].find((m) => m * magnitude >= rough)!
-  return Math.max(1, multiple * magnitude)
-}
 
 export function OverviewChart() {
   const [range, setRange] = useState<OverviewRange>('today')

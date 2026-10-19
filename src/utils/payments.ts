@@ -7,6 +7,7 @@ import type {
   Transaction,
   TxnStatus,
 } from '../types/payment'
+import { toCsv } from './csv'
 
 const DAY_MS = 86_400_000
 
@@ -109,12 +110,5 @@ export function transactionsToCsv(transactions: Transaction[]) {
     ['Reconciled', (txn) => (txn.reconciled ? 'Yes' : 'No')],
     ['Cashier', (txn) => txn.cashier],
   ]
-  const escape = (value: string | number) =>
-    `"${String(value).replace(/"/g, '""')}"`
-  return [
-    columns.map(([header]) => escape(header)).join(','),
-    ...transactions.map((txn) =>
-      columns.map(([, read]) => escape(read(txn))).join(','),
-    ),
-  ].join('\r\n')
+  return toCsv(columns, transactions)
 }

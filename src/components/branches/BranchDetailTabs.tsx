@@ -37,7 +37,8 @@ import type { BadgeTone } from '../ui/Badge'
 import Menu, { MenuItem } from '../ui/Menu'
 import Panel, { PanelEmpty } from '../ui/Panel'
 import SegmentedControl from '../ui/SegmentedControl'
-import { HealthMeter, Meter, Tile } from './BranchBits'
+import StatTile from '../ui/StatTile'
+import { HealthMeter, Meter } from './BranchBits'
 import { OrderStageChart, RevenueChart } from './BranchCharts'
 
 export type BranchTabProps = {
@@ -112,35 +113,35 @@ export function OverviewTab({ branch, now, permissions }: BranchTabProps) {
         {permissions.financials && (
           <Panel title="Revenue">
             <TileGrid>
-              <Tile label="Today" value={formatRevenue(today.revenue)} />
-              <Tile label="This week" value={formatRevenue(week.revenue)} />
-              <Tile label="This month" value={formatRevenue(month.revenue)} />
-              <Tile label="Year to date" value={formatRevenue(getYearToDateRevenue(branch, now))} />
+              <StatTile label="Today" value={formatRevenue(today.revenue)} />
+              <StatTile label="This week" value={formatRevenue(week.revenue)} />
+              <StatTile label="This month" value={formatRevenue(month.revenue)} />
+              <StatTile label="Year to date" value={formatRevenue(getYearToDateRevenue(branch, now))} />
             </TileGrid>
           </Panel>
         )}
         <Panel title="Orders" subtitle="This month, with the live queue">
           <TileGrid>
-            <Tile label="Total orders" value={number(month.orders)} />
-            <Tile label="Active now" value={stats.activeOrders} />
-            <Tile label="Completed" value={number(delivered)} />
-            <Tile label="Cancelled / overdue" value={`${Math.round(month.orders * stats.cancelRate)} / ${stats.overdue}`} note="Overdue is live" />
+            <StatTile label="Total orders" value={number(month.orders)} />
+            <StatTile label="Active now" value={stats.activeOrders} />
+            <StatTile label="Completed" value={number(delivered)} />
+            <StatTile label="Cancelled / overdue" value={`${Math.round(month.orders * stats.cancelRate)} / ${stats.overdue}`} note="Overdue is live" />
           </TileGrid>
         </Panel>
         <Panel title="Customers">
           <TileGrid>
-            <Tile label="Total customers" value={number(stats.customers)} />
-            <Tile label="New this month" value={stats.newCustomers} />
-            <Tile label="Returning" value={number(stats.customers - stats.newCustomers)} />
-            <Tile label="Satisfaction" value={`${stats.satisfaction.toFixed(1)} / 5`} />
+            <StatTile label="Total customers" value={number(stats.customers)} />
+            <StatTile label="New this month" value={stats.newCustomers} />
+            <StatTile label="Returning" value={number(stats.customers - stats.newCustomers)} />
+            <StatTile label="Satisfaction" value={`${stats.satisfaction.toFixed(1)} / 5`} />
           </TileGrid>
         </Panel>
         <Panel title="Operations" subtitle="Right now">
           <TileGrid>
-            <Tile label="Processing" value={stats.processing} />
-            <Tile label="Ready for pickup" value={stats.ready} />
-            <Tile label="Out for delivery" value={stats.outForDelivery} />
-            <Tile label="Delivered today" value={stats.deliveredToday} />
+            <StatTile label="Processing" value={stats.processing} />
+            <StatTile label="Ready for pickup" value={stats.ready} />
+            <StatTile label="Out for delivery" value={stats.outForDelivery} />
+            <StatTile label="Delivered today" value={stats.deliveredToday} />
           </TileGrid>
         </Panel>
       </div>
@@ -209,12 +210,12 @@ export function OrdersTab({ branch }: BranchTabProps) {
       <div className="space-y-3">
         <TileGrid>
           {BRANCH_PERIODS.map(({ value, label }) => (
-            <Tile key={value} label={label} value={number(getPeriodStats(branch, value).orders)} />
+            <StatTile key={value} label={label} value={number(getPeriodStats(branch, value).orders)} />
           ))}
-          <Tile label="Active now" value={stats.activeOrders} />
-          <Tile label="Processing" value={stats.processing} />
-          <Tile label="Ready for pickup" value={stats.ready} />
-          <Tile label="Overdue" value={stats.overdue} />
+          <StatTile label="Active now" value={stats.activeOrders} />
+          <StatTile label="Processing" value={stats.processing} />
+          <StatTile label="Ready for pickup" value={stats.ready} />
+          <StatTile label="Overdue" value={stats.overdue} />
         </TileGrid>
         <ModuleLink to="/orders" label="Open Orders">
           Individual orders are managed in the Orders module, which isn’t filtered by branch yet.
@@ -230,10 +231,10 @@ export function CustomersTab({ branch }: BranchTabProps) {
     <Panel title="Customers">
       <div className="space-y-3">
         <TileGrid>
-          <Tile label="Total customers" value={number(stats.customers)} />
-          <Tile label="New this month" value={stats.newCustomers} />
-          <Tile label="Returning" value={number(stats.customers - stats.newCustomers)} />
-          <Tile label="Satisfaction" value={`${stats.satisfaction.toFixed(1)} / 5`} />
+          <StatTile label="Total customers" value={number(stats.customers)} />
+          <StatTile label="New this month" value={stats.newCustomers} />
+          <StatTile label="Returning" value={number(stats.customers - stats.newCustomers)} />
+          <StatTile label="Satisfaction" value={`${stats.satisfaction.toFixed(1)} / 5`} />
         </TileGrid>
         <ModuleLink to="/customers" label="Open Customers">
           Customer profiles are managed in the Customers module, which isn’t filtered by branch yet.
@@ -249,9 +250,9 @@ export function PaymentsTab({ branch, now }: BranchTabProps) {
       <div className="space-y-3">
         <TileGrid>
           {BRANCH_PERIODS.map(({ value, label }) => (
-            <Tile key={value} label={`Revenue · ${label}`} value={formatRevenue(getPeriodStats(branch, value).revenue)} />
+            <StatTile key={value} label={`Revenue · ${label}`} value={formatRevenue(getPeriodStats(branch, value).revenue)} />
           ))}
-          <Tile label="Year to date" value={formatRevenue(getYearToDateRevenue(branch, now))} />
+          <StatTile label="Year to date" value={formatRevenue(getYearToDateRevenue(branch, now))} />
         </TileGrid>
         <div>
           <p className={labelClass}>Payment methods accepted</p>
@@ -276,12 +277,12 @@ export function DeliveriesTab({ branch }: BranchTabProps) {
     <Panel title="Deliveries">
       <div className="space-y-3">
         <TileGrid>
-          <Tile label="Pending delivery" value={stats.pendingDelivery} />
-          <Tile label="Out for delivery" value={stats.outForDelivery} />
-          <Tile label="Delivered today" value={stats.deliveredToday} />
-          <Tile label="On-time rate" value={`${stats.onTime}%`} />
-          <Tile label="Pickup capacity" value={capacity.pickups} note="per day" />
-          <Tile label="Delivery capacity" value={capacity.deliveries} note="per day" />
+          <StatTile label="Pending delivery" value={stats.pendingDelivery} />
+          <StatTile label="Out for delivery" value={stats.outForDelivery} />
+          <StatTile label="Delivered today" value={stats.deliveredToday} />
+          <StatTile label="On-time rate" value={`${stats.onTime}%`} />
+          <StatTile label="Pickup capacity" value={capacity.pickups} note="per day" />
+          <StatTile label="Delivery capacity" value={capacity.deliveries} note="per day" />
         </TileGrid>
         <ModuleLink to="/pickup-delivery" label="Open Pickup & Delivery">
           Routes, drivers and proof of delivery are managed in the Pickup &amp; Delivery module.
@@ -768,10 +769,10 @@ export function SettingsTab({ branch, permissions, onChange, onEditStep }: Branc
 
       <Panel title="Capacity" action={edit(5)} className="lg:col-span-2">
         <TileGrid>
-          <Tile label="Daily orders" value={branch.capacity.dailyOrders} />
-          <Tile label="Max items / day" value={number(branch.capacity.maxItems)} />
-          <Tile label="Avg processing" value={`${branch.capacity.processingHours} h`} />
-          <Tile label="Machines" value={branch.capacity.machines} />
+          <StatTile label="Daily orders" value={branch.capacity.dailyOrders} />
+          <StatTile label="Max items / day" value={number(branch.capacity.maxItems)} />
+          <StatTile label="Avg processing" value={`${branch.capacity.processingHours} h`} />
+          <StatTile label="Machines" value={branch.capacity.machines} />
         </TileGrid>
       </Panel>
     </div>

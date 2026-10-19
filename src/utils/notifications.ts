@@ -14,6 +14,7 @@ import type {
   NotificationPriority,
   NotificationTab,
 } from '../types/notification'
+import { csvCell } from './csv'
 import { formatDate } from './customers'
 import { formatTime } from './orders'
 
@@ -190,11 +191,6 @@ export function composeNotification(input: ComposeInput, id: string, by: string)
     archived: false,
     createdBy: by,
   }
-}
-
-const csvCell = (value: string | number) => {
-  const text = String(value)
-  return /[",\r\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 export function notificationsToCsv(notifications: AppNotification[]) {

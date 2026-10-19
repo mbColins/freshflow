@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { Pencil, Plus, Zap } from 'lucide-react'
 import {
   ADD_ONS,
@@ -9,11 +9,7 @@ import {
   VISIBILITIES,
 } from '../../constants/services'
 import type { ServicePermissions } from '../../constants/services'
-import type {
-  LaundryService,
-  Promotion,
-  PromotionType,
-} from '../../types/service'
+import type { LaundryService, Promotion } from '../../types/service'
 import { formatDate } from '../../utils/customers'
 import { formatXaf } from '../../utils/orders'
 import { formatHours, formatPrice } from '../../utils/services'
@@ -27,6 +23,8 @@ import {
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
 import { CapacityMeter, WorkflowChain } from './ServiceBits'
+import { PanelEmpty } from '../ui/Panel'
+import { DetailGrid } from '../ui/Details'
 
 export type ServiceTabProps = {
   service: LaundryService
@@ -58,27 +56,6 @@ function Panel({
   )
 }
 
-function Facts({ rows }: { rows: [string, ReactNode][] }) {
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-      {rows.map(([label, value]) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-[10px] text-muted">{label}</dt>
-          <dd className="font-semibold break-words text-ink">{value || '—'}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
-function EmptyNote({ children }: { children: ReactNode }) {
-  return (
-    <p className="rounded-lg bg-field px-3 py-6 text-center text-xs text-muted">
-      {children}
-    </p>
-  )
-}
-
 function EditButton({
   step,
   permissions,
@@ -107,7 +84,7 @@ export function OverviewTab(props: ServiceTabProps) {
         <Panel title="Service information" action={<EditButton step={0} {...props} />}>
           <p className="text-xs leading-relaxed text-muted">{service.description}</p>
           <div className="mt-3">
-            <Facts
+            <DetailGrid
               rows={[
                 ['Category', service.category],
                 ['Service code', <span className="font-mono">{service.id}</span>],
@@ -159,7 +136,7 @@ export function OverviewTab(props: ServiceTabProps) {
           }
         >
           {service.promotions.length === 0 ? (
-            <EmptyNote>No active promotions.</EmptyNote>
+            <PanelEmpty>No active promotions.</PanelEmpty>
           ) : (
             <ul className="space-y-2">
               {service.promotions.map((promotion) => (
@@ -189,7 +166,7 @@ export function PricingTab(props: ServiceTabProps) {
       <Panel title="Pricing configuration" action={<EditButton step={1} {...props} />}>
         <p className="text-xl font-bold text-ink">{formatPrice(service)}</p>
         <div className="mt-3">
-          <Facts
+          <DetailGrid
             rows={[
               ['Pricing model', model.label],
               ['Pricing unit', model.unit],
@@ -235,7 +212,7 @@ export function PricingTab(props: ServiceTabProps) {
               Express Available
             </p>
             <div className="mt-3">
-              <Facts
+              <DetailGrid
                 rows={[
                   ['Normal', formatHours(service.standardHours)],
                   ['Express', formatHours(service.express.hours)],
@@ -249,7 +226,7 @@ export function PricingTab(props: ServiceTabProps) {
             </p>
           </>
         ) : (
-          <EmptyNote>Express processing is not offered for this service.</EmptyNote>
+          <PanelEmpty>Express processing is not offered for this service.</PanelEmpty>
         )}
       </Panel>
     </div>
@@ -286,7 +263,7 @@ export function AddOnsTab(props: ServiceTabProps) {
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Add-ons" action={<EditButton step={5} {...props} />}>
         {addOns.length === 0 ? (
-          <EmptyNote>No add-ons configured for this service.</EmptyNote>
+          <PanelEmpty>No add-ons configured for this service.</PanelEmpty>
         ) : (
           <ul className="space-y-2">
             {addOns.map(({ id, name, price, description }) => (
@@ -307,7 +284,7 @@ export function AddOnsTab(props: ServiceTabProps) {
       </Panel>
       <Panel title="Options at order creation" action={<EditButton step={5} {...props} />}>
         {service.options.length === 0 ? (
-          <EmptyNote>No selectable options.</EmptyNote>
+          <PanelEmpty>No selectable options.</PanelEmpty>
         ) : (
           <ul className="flex flex-wrap gap-1.5">
             {service.options.map((option) => (
@@ -331,7 +308,7 @@ export function MachinesTab(props: ServiceTabProps) {
   return (
     <Panel title="Machines & staff" action={<EditButton step={3} {...props} />}>
       {machines.length === 0 ? (
-        <EmptyNote>This service does not need any machine.</EmptyNote>
+        <PanelEmpty>This service does not need any machine.</PanelEmpty>
       ) : (
         <ul className="grid gap-2 sm:grid-cols-2">
           {machines.map(({ name, available, capacity }) => (
@@ -358,7 +335,7 @@ export function InventoryTab(props: ServiceTabProps) {
   return (
     <Panel title="Inventory consumption" action={<EditButton step={3} {...props} />}>
       {service.consumption.length === 0 ? (
-        <EmptyNote>No materials configured for this service.</EmptyNote>
+        <PanelEmpty>No materials configured for this service.</PanelEmpty>
       ) : (
         <>
           <p className="text-[11px] text-muted">Expected usage per 1 {unit}</p>
@@ -476,10 +453,10 @@ export function BranchesTab({ service, permissions, onChange }: ServiceTabProps)
 export function PerformanceTab({ service, now, permissions }: ServiceTabProps) {
   const { stats } = service
   if (!permissions.financials) {
-    return <EmptyNote>Performance figures are not available for your role.</EmptyNote>
+    return <PanelEmpty>Performance figures are not available for your role.</PanelEmpty>
   }
   if (stats.orders === 0) {
-    return <EmptyNote>No orders yet, so there is nothing to measure.</EmptyNote>
+    return <PanelEmpty>No orders yet, so there is nothing to measure.</PanelEmpty>
   }
 
   const offered = service.branches.filter(({ available }) => available)
@@ -530,7 +507,7 @@ export function PerformanceTab({ service, now, permissions }: ServiceTabProps) {
 
       <div className="min-w-0 space-y-4">
         <Panel title="Service performance">
-          <Facts
+          <DetailGrid
             rows={[
               ['Orders', stats.orders],
               ['Revenue', formatXaf(stats.revenue)],
@@ -542,7 +519,7 @@ export function PerformanceTab({ service, now, permissions }: ServiceTabProps) {
           />
         </Panel>
         <Panel title="Quality metrics">
-          <Facts
+          <DetailGrid
             rows={[
               ['Quality pass rate', `${stats.qualityPass}%`],
               ['Late completion', `${stats.lateRate}%`],
@@ -560,7 +537,7 @@ export function HistoryTab({ service }: ServiceTabProps) {
   return (
     <Panel title="Audit history">
       {service.audit.length === 0 ? (
-        <EmptyNote>No changes recorded yet.</EmptyNote>
+        <PanelEmpty>No changes recorded yet.</PanelEmpty>
       ) : (
         <ol className="space-y-3 border-l border-line pl-4">
           {service.audit.map((entry, index) => (
@@ -592,21 +569,19 @@ export function PromotionDialog({
   onClose: () => void
   onSave: (promotion: Promotion) => void
 }) {
-  const [name, setName] = useState('')
-  const [type, setType] = useState<PromotionType>(PROMOTION_TYPES[0])
-  const [value, setValue] = useState('')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
+  const { register, handleSubmit, control } = useForm<Promotion>({
+    defaultValues: { name: '', type: PROMOTION_TYPES[0], value: '', from: '', to: '' },
+  })
+  const [name, from, to] = useWatch({ control, name: ['name', 'from', 'to'] })
   const valid = name.trim() !== '' && from !== '' && to !== '' && from <= to
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (valid) onSave({ name: name.trim(), type, value: value.trim(), from, to })
+  function onSubmit(values: Promotion) {
+    if (valid) onSave({ ...values, name: values.name.trim(), value: values.value.trim() })
   }
 
   return (
     <Modal open onClose={onClose} title="Create Promotion" subtitle={serviceName}>
-      <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
+      <form onSubmit={handleSubmit(onSubmit)} className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <label htmlFor="promotion-name" className={labelClass}>
             Promotion name
@@ -615,8 +590,7 @@ export function PromotionDialog({
             id="promotion-name"
             autoFocus
             placeholder="e.g. Weekend Discount"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
+            {...register('name')}
             className={fieldClass}
           />
         </div>
@@ -626,8 +600,7 @@ export function PromotionDialog({
           </label>
           <select
             id="promotion-type"
-            value={type}
-            onChange={(event) => setType(event.target.value as PromotionType)}
+            {...register('type')}
             className={fieldClass}
           >
             {PROMOTION_TYPES.map((option) => (
@@ -642,8 +615,7 @@ export function PromotionDialog({
           <input
             id="promotion-value"
             placeholder="e.g. 10% or XAF 500"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
+            {...register('value')}
             className={fieldClass}
           />
         </div>
@@ -654,8 +626,7 @@ export function PromotionDialog({
           <input
             id="promotion-from"
             type="date"
-            value={from}
-            onChange={(event) => setFrom(event.target.value)}
+            {...register('from')}
             className={fieldClass}
           />
         </div>
@@ -666,8 +637,7 @@ export function PromotionDialog({
           <input
             id="promotion-to"
             type="date"
-            value={to}
-            onChange={(event) => setTo(event.target.value)}
+            {...register('to')}
             className={fieldClass}
           />
         </div>

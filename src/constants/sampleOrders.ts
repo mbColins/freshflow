@@ -188,3 +188,9 @@ function buildOrder(seed: Seed): Order {
 }
 
 export const SAMPLE_ORDERS: Order[] = SEEDS.map(buildOrder)
+
+// The sample orders placed by a phone number
+// TODO: replace with the orders API
+export function getSampleOrders(phone: string) {
+  return SAMPLE_ORDERS.filter((order) => order.customer.phone === phone)
+}

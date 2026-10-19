@@ -18,13 +18,13 @@ import {
   Trophy,
   Wallet,
 } from 'lucide-react'
-import { BRANCHES } from '../../constants/orders'
 import {
   PRICING_MODELS,
   SERVICE_PACKAGES,
   SERVICE_STATUSES,
   VISIBILITIES,
 } from '../../constants/services'
+import { useGetBranchDropdownQuery } from '../../services/branchApi'
 import type { ServicePermissions } from '../../constants/services'
 import type {
   LaundryService,
@@ -43,6 +43,7 @@ import {
   secondaryButton,
   sectionTitle,
 } from '../orders/styles'
+import InlineNameForm from '../ui/InlineNameForm'
 import Menu from '../ui/Menu'
 import Modal from '../ui/Modal'
 import SegmentedControl from '../ui/SegmentedControl'
@@ -179,8 +180,6 @@ export function CategoryNav({
   showFinancials: boolean
   onAddCategory: (name: string) => void
 }) {
-  const [name, setName] = useState('')
-
   return (
     <nav
       aria-label="Service categories"
@@ -230,32 +229,17 @@ export function CategoryNav({
           triggerClassName={`${chipClass} text-brand ring-1 ring-brand/30 hover:bg-brand/5`}
         >
           {(close) => (
-            <form
-              className="flex w-64 gap-1 p-1"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (!name.trim()) return
-                onAddCategory(name.trim())
-                setName('')
+            <InlineNameForm
+              autoFocus
+              label="Category name"
+              placeholder="Category name…"
+              submitLabel="Add"
+              className="w-64 p-1"
+              onSave={(name) => {
+                onAddCategory(name)
                 close()
               }}
-            >
-              <input
-                autoFocus
-                aria-label="Category name"
-                placeholder="Category name…"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className={`${fieldClass} h-8`}
-              />
-              <button
-                type="submit"
-                disabled={!name.trim()}
-                className={`${primaryButton} h-8`}
-              >
-                Add
-              </button>
-            </form>
+            />
           )}
         </Menu>
       )}
@@ -279,7 +263,8 @@ const SELECTS: Record<
   branch: {
     label: 'Branch',
     all: 'All branches',
-    options: BRANCHES.map((branch) => ({ value: branch, label: branch })),
+    // The connected tenant's branches, filled in by FilterSelect
+    options: [],
   },
   pricingModel: {
     label: 'Pricing type',
@@ -321,7 +306,11 @@ function FilterSelect({
   onChange,
   className = '',
 }: FilterProps & { name: SelectKey; className?: string }) {
-  const { label, all, options } = SELECTS[name]
+  const { label, all, options: fixed } = SELECTS[name]
+  // Services record their branches by name, so filter by name
+  const branches = useGetBranchDropdownQuery(undefined, { skip: name !== 'branch' })
+  const options =
+    name === 'branch' ? (branches.data ?? []).map(({ name: branch }) => ({ value: branch, label: branch })) : fixed
   return (
     <select
       aria-label={label}

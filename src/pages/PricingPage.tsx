@@ -98,6 +98,7 @@ function PricingPage() {
   const [filters, setFilters] = useState<PricingFilters>(EMPTY_PRICING_FILTERS)
   const [sort, setSort] = useState<PricingSort>({ key: 'name', descending: false })
   const [dialog, setDialog] = useState<DialogState | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [role, setRole] = useLocalStorage<OrderRole>('pricing.role', 'admin')
   const [view, setView] = useLocalStorage<PricingView>('pricing.view', 'cards')
@@ -155,15 +156,22 @@ function PricingPage() {
     ])
   }
 
+  // A save the server refused is undone; say why
+  const reportFailure = (error: string | null) => {
+    if (error) setToast(error)
+  }
+
   function applyGlobalPrice(service: LaundryService, price: number, reason: string) {
     const unit = getUnit(service)
-    serviceStore.update([service.id], (current) =>
-      withAudit({ ...current, basePrice: price }, CURRENT_USER, {
-        change: `Changed price (${reason})`,
-        from: `${formatXaf(current.basePrice)} / ${unit}`,
-        to: `${formatXaf(price)} / ${unit}`,
-      }),
-    )
+    void serviceStore
+      .update([service.id], (current) =>
+        withAudit({ ...current, basePrice: price }, CURRENT_USER, {
+          change: `Changed price (${reason})`,
+          from: `${formatXaf(current.basePrice)} / ${unit}`,
+          to: `${formatXaf(price)} / ${unit}`,
+        }),
+      )
+      .then(reportFailure)
     return { serviceId: service.id, serviceName: service.name, scope: 'Global', from: service.basePrice, to: price, reason }
   }
 
@@ -192,13 +200,15 @@ function PricingPage() {
     const before = service.branches.find((setting) => setting.branch === branch)?.priceOverride ?? service.basePrice
     const after = price ?? service.basePrice
     if (price === before && price !== null) return
-    serviceStore.update([serviceId], (current) =>
-      withAudit(
-        { ...current, branches: current.branches.map((setting) => (setting.branch === branch ? { ...setting, priceOverride: price === current.basePrice ? null : price } : setting)) },
-        CURRENT_USER,
-        { change: price === null ? `Reset ${branch} to the global price` : `Set ${branch} price`, from: formatXaf(before), to: formatXaf(after) },
-      ),
-    )
+    void serviceStore
+      .update([serviceId], (current) =>
+        withAudit(
+          { ...current, branches: current.branches.map((setting) => (setting.branch === branch ? { ...setting, priceOverride: price === current.basePrice ? null : price } : setting)) },
+          CURRENT_USER,
+          { change: price === null ? `Reset ${branch} to the global price` : `Set ${branch} price`, from: formatXaf(before), to: formatXaf(after) },
+        ),
+      )
+      .then(reportFailure)
     if (before !== after) {
       logChanges([{ serviceId, serviceName: service.name, scope: branch, from: before, to: after, reason: price === null ? 'Reset to global price' : 'Branch price override' }])
     }
@@ -208,7 +218,8 @@ function PricingPage() {
   function handleBulk(adjustment: BulkAdjustment) {
     const { rows } = previewBulk(allServices, adjustment)
     const entries = rows.flatMap(({ service, from, to, overrides }) => {
-      serviceStore.update([service.id], (current) =>
+      void serviceStore
+        .update([service.id], (current) =>
         withAudit(
           {
             ...current,
@@ -221,7 +232,8 @@ function PricingPage() {
           CURRENT_USER,
           { change: `Bulk price update (${adjustment.reason})`, from: formatXaf(from), to: formatXaf(to) },
         ),
-      )
+        )
+        .then(reportFailure)
       return [
         { serviceId: service.id, serviceName: service.name, scope: 'Global', from, to, reason: adjustment.reason },
         ...overrides.map((override) => ({ serviceId: service.id, serviceName: service.name, scope: override.branch, from: override.from, to: override.to, reason: adjustment.reason })),
@@ -255,14 +267,19 @@ function PricingPage() {
     setToast(`Imported ${rows.length} ${rows.length === 1 ? 'price' : 'prices'}`)
   }
 
-  function handleSaveService(service: LaundryService, publish: boolean) {
+  async function handleSaveService(service: LaundryService, publish: boolean) {
     const existing = allServices.find(({ id }) => id === service.id)
     const status = !publish ? 'draft' : existing && existing.status !== 'draft' ? existing.status : 'active'
-    serviceStore.save(
+    setSaveError(null)
+    const error = await serviceStore.save(
       withAudit({ ...service, status }, CURRENT_USER, {
         change: !existing ? (publish ? 'Created and published service' : 'Created draft service') : 'Updated configuration',
       }),
     )
+    if (error) {
+      setSaveError(error)
+      return
+    }
     if (existing && existing.basePrice !== service.basePrice) {
       logChanges([{ serviceId: service.id, serviceName: service.name, scope: 'Global', from: existing.basePrice, to: service.basePrice, reason: 'Edited in the service editor' }])
     }
@@ -528,7 +545,11 @@ function PricingPage() {
           initialStep={dialogService ? 1 : 0}
           categories={categories}
           existing={allServices}
-          onClose={() => setDialog(null)}
+          error={saveError}
+          onClose={() => {
+            setSaveError(null)
+            setDialog(null)
+          }}
           onSave={handleSaveService}
         />
       )}

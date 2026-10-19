@@ -6,6 +6,7 @@ const VARIANT_CLASSES = {
   sm: 'm-auto max-h-[90vh] max-w-sm rounded-xl',
   md: 'm-auto max-h-[90vh] max-w-lg rounded-xl max-sm:m-0 max-sm:h-full max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none',
   lg: 'm-auto max-h-[90vh] max-w-3xl rounded-xl max-sm:m-0 max-sm:h-full max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none',
+  xl: 'm-auto max-h-[90vh] max-w-4xl rounded-xl max-sm:m-0 max-sm:h-full max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none',
   drawer: 'm-0 ml-auto h-full max-h-none max-w-xl',
 }
 
