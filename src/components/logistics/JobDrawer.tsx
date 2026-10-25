@@ -25,7 +25,7 @@ import type {
   JobStatus,
 } from '../../types/logistics'
 import { formatXaf } from '../../utils/orders'
-import { formatClock, getReadyMinutes, formatMinutes, isClosed } from '../../utils/logistics'
+import { formatClock, getReadyMinutes, formatMinutes, isClosed, jobRef } from '../../utils/logistics'
 import { dangerButton, fieldClass, labelClass, primaryButton, secondaryButton } from '../orders/styles'
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
@@ -225,10 +225,12 @@ function JobActions({
   const [mode, setMode] = useState<Mode>('view')
 
   const flow = job.type === 'pickup' ? PICKUP_FLOW : DELIVERY_FLOW
-  const current = job.status === 'arrived' ? 'enRoute' : job.status
-  const next = flow[flow.indexOf(current) + 1] as JobStatus | undefined
-  const closed = isClosed(job)
-  const onTheRoad = job.status === 'enRoute' || job.status === 'arrived'
+  // A scheduled job moves on by being assigned, not by this button
+  const next = job.status === 'scheduled' ? undefined : (flow[flow.indexOf(job.status) + 1] as JobStatus | undefined)
+  // What the backend allows: assigning while scheduled or assigned, failing
+  // once a driver has it, rescheduling only a failed job
+  const assignable = job.status === 'scheduled' || job.status === 'assigned'
+  const canFail = job.status === 'assigned' || job.status === 'enRoute' || job.status === 'arrived'
   const back = () => setMode('view')
 
   if (mode === 'proof') {
@@ -254,11 +256,11 @@ function JobActions({
 
   return (
     <div className="flex flex-wrap gap-2">
-      {!closed && next && job.status !== 'scheduled' && (
+      {next && (
         <button
           type="button"
-          disabled={next !== 'scheduled' && !hasDriver}
-          title={next !== 'scheduled' && !hasDriver ? 'Assign a driver first' : undefined}
+          disabled={!hasDriver}
+          title={!hasDriver ? 'Assign a driver first' : undefined}
           onClick={() =>
             job.type === 'delivery' && next === 'done'
               ? setMode('proof')
@@ -270,37 +272,19 @@ function JobActions({
           Mark {STATUS_LABELS[next][job.type]}
         </button>
       )}
-      {job.type === 'pickup' && job.status === 'done' && (
-        <button
-          type="button"
-          onClick={() => onAdvance(job.id, 'received')}
-          className={primaryButton}
-        >
-          Mark Received at Branch
-        </button>
-      )}
-      {job.status === 'enRoute' && (
-        <button
-          type="button"
-          onClick={() => onAdvance(job.id, 'arrived')}
-          className={secondaryButton}
-        >
-          Mark Arrived
-        </button>
-      )}
-      {!closed && (
+      {assignable && (
         <button type="button" onClick={() => onAssign([job.id])} className={secondaryButton}>
           <UserCog className="size-4 text-muted" aria-hidden="true" />
           {hasDriver ? 'Reassign' : 'Assign Driver'}
         </button>
       )}
-      {(!closed || job.status === 'failed') && (
+      {job.status === 'failed' && (
         <button type="button" onClick={() => setMode('reschedule')} className={secondaryButton}>
           <CalendarClock className="size-4 text-muted" aria-hidden="true" />
           Reschedule
         </button>
       )}
-      {onTheRoad && (
+      {canFail && (
         <button type="button" onClick={() => setMode('fail')} className={secondaryButton}>
           <TriangleAlert className="size-4 text-danger" aria-hidden="true" />
           Report Problem
@@ -321,7 +305,7 @@ function JobDrawer({ job, drivers, now, onClose, ...actions }: JobDrawerProps) {
       open={job !== null}
       onClose={onClose}
       variant="drawer"
-      title={job ? `${job.type === 'pickup' ? 'Pickup' : 'Delivery'} #${job.id}` : ''}
+      title={job ? `${job.type === 'pickup' ? 'Pickup' : 'Delivery'} #${jobRef(job)}` : ''}
       subtitle={
         job && (
           <span className="flex flex-wrap items-center gap-2">

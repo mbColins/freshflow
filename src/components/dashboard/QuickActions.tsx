@@ -8,8 +8,8 @@ import {
   UserPlus,
 } from 'lucide-react'
 import SegmentedControl from '../ui/SegmentedControl'
-import { ROLES, VIEW_STATES } from './dashboardState'
-import type { Role, ViewState } from './dashboardState'
+import { VIEW_STATES } from './dashboardState'
+import type { ViewState } from './dashboardState'
 
 const SECONDARY_ACTIONS = [
   { label: 'Add Customer', icon: UserPlus },
@@ -22,8 +22,12 @@ const secondaryClass =
   'inline-flex h-8 items-center gap-1.5 rounded-md bg-white px-3 text-[11px] font-semibold text-ink ring-1 ring-line transition hover:bg-field focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none'
 
 type QuickActionsProps = {
-  role: Role
-  onRoleChange: (role: Role) => void
+  // The connected user's type, e.g. "Store manager"; it picks the dashboard's sections
+  userTypeLabel: string
+  // Tenant owners only: the branches they can narrow the dashboard to
+  branches?: { id: string; name: string }[]
+  branch: string
+  onBranchChange: (branch: string) => void
   viewState: ViewState
   onViewStateChange: (viewState: ViewState) => void
   refreshing: boolean
@@ -31,8 +35,10 @@ type QuickActionsProps = {
 }
 
 function QuickActions({
-  role,
-  onRoleChange,
+  userTypeLabel,
+  branches,
+  branch,
+  onBranchChange,
   viewState,
   onViewStateChange,
   refreshing,
@@ -57,12 +63,28 @@ function QuickActions({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <SegmentedControl
-          label="Role perspective"
-          options={ROLES}
-          value={role}
-          onChange={onRoleChange}
-        />
+        {branches && (
+          <select
+            aria-label="Show the dashboard for branch"
+            value={branch}
+            onChange={(event) => onBranchChange(event.target.value)}
+            className="h-8 rounded-md bg-field px-2.5 text-[11px] font-semibold text-ink outline-none transition focus:ring-2 focus:ring-brand"
+          >
+            <option value="">All branches</option>
+            {branches.map(({ id, name }) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
+        {userTypeLabel && (
+          <div className="inline-flex rounded-md bg-field p-0.5" title="The dashboard shown for your account type">
+            <span className="rounded bg-white px-2.5 py-1 text-[11px] font-semibold text-brand shadow-sm">
+              {userTypeLabel}
+            </span>
+          </div>
+        )}
         <SegmentedControl
           label="Dashboard state preview"
           options={VIEW_STATES}

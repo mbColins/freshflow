@@ -641,10 +641,17 @@ const ITEM_STEPS = ['Basic', 'Stock', 'Cost', 'Expiration', 'Review']
 
 export function ItemWizard({
   existing,
+  branches,
+  defaultBranch,
+  error,
   onClose,
   onCreate,
 }: {
   existing: InventoryItem[]
+  // The branches the person may stock; one is chosen for the new item
+  branches: { uuid: string; name: string }[]
+  defaultBranch: string
+  error?: string | null
   onClose: () => void
   onCreate: (item: InventoryItem) => void
 }) {
@@ -668,14 +675,21 @@ export function ItemWizard({
     expiresAt: null,
     lastMovementAt: new Date().toISOString(),
     services: [],
+    branchId: defaultBranch || (branches.length === 1 ? branches[0].uuid : ''),
+    branchName: '',
+    serviceIds: [],
   }))
   const patch = (change: Partial<InventoryItem>) => setDraft({ ...draft, ...change })
-  const sku = draft.id.trim().toUpperCase()
 
   const problems = [
     !draft.name.trim() && 'Item name is required (Basic).',
-    !sku && 'SKU is required (Basic).',
-    existing.some(({ id }) => id === sku) && `SKU ${sku} is already in use (Basic).`,
+    !draft.branchId && 'Choose the branch that holds this item (Basic).',
+    existing.some(
+      ({ name, branchId, batch }) =>
+        branchId === draft.branchId &&
+        batch.trim().toLowerCase() === draft.batch.trim().toLowerCase() &&
+        name.trim().toLowerCase() === draft.name.trim().toLowerCase(),
+    ) && 'This branch already has an item with this name and batch (Basic).',
     draft.max <= 0 && 'Maximum stock must be above zero (Stock).',
     draft.reorder > draft.max && 'Reorder level cannot be above the maximum (Stock).',
     draft.safety > draft.reorder && 'Safety stock cannot be above the reorder level (Stock).',
@@ -728,7 +742,7 @@ export function ItemWizard({
             <button
               type="button"
               disabled={problems.length > 0}
-              onClick={() => onCreate({ ...draft, id: sku, name: draft.name.trim() })}
+              onClick={() => onCreate({ ...draft, name: draft.name.trim() })}
               className={primaryButton}
             >
               <Check className="size-4" aria-hidden="true" />
@@ -770,15 +784,21 @@ export function ItemWizard({
               className={fieldClass}
             />
           </FormField>
-          <FormField label="SKU" htmlFor="item-sku">
-            <input
-              id="item-sku"
-              autoComplete="off"
-              placeholder="e.g. DET-002"
-              value={draft.id}
-              onChange={(event) => patch({ id: event.target.value.toUpperCase() })}
-              className={`${fieldClass} font-mono`}
-            />
+          <FormField label="Branch" htmlFor="item-branch">
+            <select
+              id="item-branch"
+              value={draft.branchId}
+              disabled={branches.length === 1}
+              onChange={(event) => patch({ branchId: event.target.value })}
+              className={fieldClass}
+            >
+              {branches.length !== 1 && <option value="">Choose a branch</option>}
+              {branches.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
           </FormField>
           <FormField label="Category" htmlFor="item-category">
             <select
@@ -903,7 +923,7 @@ export function ItemWizard({
             {(
               [
                 ['Item', draft.name || '—'],
-                ['SKU', sku || '—'],
+                ['Branch', branches.find(({ uuid }) => uuid === draft.branchId)?.name ?? '—'],
                 ['Category', draft.category],
                 ['Opening stock', formatQty(draft.stock, draft.unit)],
                 ['Reorder / safety / max', `${draft.reorder} / ${draft.safety} / ${draft.max} ${draft.unit}`],
@@ -918,6 +938,11 @@ export function ItemWizard({
               </div>
             ))}
           </dl>
+          {error && (
+            <p role="alert" className="rounded-lg bg-danger/5 p-3 text-xs font-semibold text-danger ring-1 ring-danger/20">
+              {error}
+            </p>
+          )}
           {problems.length > 0 && (
             <ul
               role="alert"

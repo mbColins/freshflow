@@ -8,19 +8,15 @@ import {
   ScanLine,
   Upload,
 } from 'lucide-react'
-import { ORDER_ROLES, PREVIEW_STATES } from '../../constants/orders'
-import type { Permissions, PreviewState } from '../../constants/orders'
-import type { OrderRole } from '../../types/order'
+import type { Permissions } from '../../constants/orders'
 import Menu, { MenuItem } from '../ui/Menu'
-import SegmentedControl from '../ui/SegmentedControl'
-import { fieldClass, primaryButton, secondaryButton } from './styles'
+import { primaryButton, secondaryButton } from './styles'
 
 type OrdersHeaderProps = {
-  role: OrderRole
-  onRoleChange: (role: OrderRole) => void
   permissions: Permissions
-  preview: PreviewState
-  onPreviewChange: (preview: PreviewState) => void
+  // Whether the person may import orders from a file
+  canImport: boolean
+  onImport: () => void
   confirmMoves: boolean
   onConfirmMovesChange: (value: boolean) => void
   onNewOrder: () => void
@@ -30,11 +26,9 @@ type OrdersHeaderProps = {
 }
 
 function OrdersHeader({
-  role,
-  onRoleChange,
   permissions,
-  preview,
-  onPreviewChange,
+  canImport,
+  onImport,
   confirmMoves,
   onConfirmMovesChange,
   onNewOrder,
@@ -96,8 +90,13 @@ function OrdersHeader({
           >
             {(close) => (
               <>
-                {/* TODO: needs a file format and an import endpoint */}
-                <MenuItem onSelect={close} disabled>
+                <MenuItem
+                  onSelect={() => {
+                    close()
+                    onImport()
+                  }}
+                  disabled={!canImport}
+                >
                   <Upload className="size-4 text-muted" aria-hidden="true" />
                   Import Orders
                 </MenuItem>
@@ -139,28 +138,6 @@ function OrdersHeader({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-        <label className="flex items-center gap-2 whitespace-nowrap">
-          Viewing as
-          <select
-            value={role}
-            onChange={(event) => onRoleChange(event.target.value as OrderRole)}
-            className={`${fieldClass} h-8 w-auto!`}
-          >
-            {ORDER_ROLES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <SegmentedControl
-          label="Page state preview"
-          options={PREVIEW_STATES}
-          value={preview}
-          onChange={onPreviewChange}
-        />
-      </div>
     </div>
   )
 }

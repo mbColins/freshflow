@@ -82,7 +82,8 @@ function OperationsPage() {
   const permissions = OPS_PERMISSIONS[role]
   const actor = role === 'staff' ? STAFF_PERSPECTIVE_USER : CURRENT_USER
   const branch = branches.find(({ id }) => id === OPS_BRANCH_ID)
-  const machines = allMachines.filter(({ branchId, status }) => branchId === OPS_BRANCH_ID && status !== 'retired')
+  // TODO: only the branch being worked once the operations page is on the API
+  const machines = allMachines.filter(({ status }) => status !== 'retired')
   const filtered = jobs.filter((job) => matchesOpsFilters(job, filters, now)).sort(compareJobs)
   const filtersActive = Object.values(filters).some((value) => value !== '')
   const services = [...new Set(jobs.map(({ service }) => service))].sort()

@@ -1,11 +1,11 @@
 import {
-  BRANCHES,
   PAYMENT_STATUSES,
   PRIORITIES,
   SERVICES,
-  STAFF,
   STATUSES,
 } from '../../constants/orders'
+import useBranchNames from '../../hooks/useBranchNames'
+import useStaff from '../../hooks/useStaff'
 import type { OrderFilters } from '../../types/order'
 import { fieldClass } from './styles'
 
@@ -43,7 +43,7 @@ const OPTIONS: Record<
   branch: {
     label: 'Branch',
     all: 'All branches',
-    options: BRANCHES.map((branch) => ({ value: branch, label: branch })),
+    options: [],
   },
   priority: {
     label: 'Priority',
@@ -61,7 +61,7 @@ const OPTIONS: Record<
   staff: {
     label: 'Assigned staff',
     all: 'All staff',
-    options: STAFF.map((name) => ({ value: name, label: name })),
+    options: [],
   },
   customerType: {
     label: 'Customer type',
@@ -88,7 +88,16 @@ function FilterSelect({
   onChange,
   className = '',
 }: FilterSelectProps) {
-  const { label, all, options } = OPTIONS[name]
+  const { label, all, options: fixed } = OPTIONS[name]
+  const staff = useStaff()
+  const branches = useBranchNames().names
+  // Staff and branches come from the API
+  const options =
+    name === 'staff'
+      ? staff.map(({ name: person }) => ({ value: person, label: person }))
+      : name === 'branch'
+        ? branches.map((branch) => ({ value: branch, label: branch }))
+        : fixed
   return (
     <select
       aria-label={label}

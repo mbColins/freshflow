@@ -9,6 +9,8 @@ import {
   ClipboardList,
   Cpu,
   CreditCard,
+  Gem,
+  History,
   Layers,
   LayoutDashboard,
   LogOut,
@@ -26,13 +28,15 @@ import {
   WashingMachine,
 } from 'lucide-react'
 import useCurrentUser from '../../hooks/useCurrentUser'
-import useNotifications from '../../hooks/useNotifications'
 import useSettings from '../../hooks/useSettings'
 import { useLogoutMutation } from '../../services/authApi'
+import { useGetUnreadCountQuery } from '../../services/inAppNotificationApi'
 import { translate } from '../../utils/settings'
 
 type NavItem = {
   label: string
+  // The permission menu that opens it (see GET /permissions/catalog)
+  menu: string
   icon: LucideIcon
   badge?: string
   to?: string
@@ -47,26 +51,46 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Operations',
     items: [
-      { label: 'Dashboard', icon: LayoutDashboard, to: '/' },
-      { label: 'Orders', icon: ClipboardList, badge: '86', to: '/orders' },
-      { label: 'Customers', icon: Users, to: '/customers' },
-      { label: 'Services', icon: Shirt, to: '/services' },
-      { label: 'Laundry Operations', icon: WashingMachine, to: '/operations' },
-      { label: 'Pickup & Delivery', icon: Truck, to: '/pickup-delivery' },
-      { label: 'Payments', icon: CreditCard, to: '/payments' },
-      { label: 'Inventory', icon: Package, badge: '2', to: '/inventory' },
-      { label: 'Staff', icon: UserCog, to: '/staff' },
-      { label: 'Reports', icon: ChartColumn },
-      { label: 'Notifications', icon: Bell, to: '/notifications' },
+      { label: 'Dashboard', menu: 'DASHBOARD', icon: LayoutDashboard, to: '/' },
+      { label: 'Orders', menu: 'ORDERS', icon: ClipboardList, badge: '86', to: '/orders' },
+      { label: 'Customers', menu: 'CUSTOMERS', icon: Users, to: '/customers' },
+      { label: 'Services', menu: 'SERVICES', icon: Shirt, to: '/services' },
+      { label: 'Laundry Operations', menu: 'OPERATIONS', icon: WashingMachine, to: '/operations' },
+      {
+        label: 'Pickup & Delivery',
+        menu: 'LOGISTICS',
+        icon: Truck,
+        to: '/pickup-delivery',
+        children: [
+          { label: 'Dispatch', to: '/pickup-delivery' },
+          { label: 'Drivers', to: '/pickup-delivery/drivers' },
+          { label: 'Delivery Zones', to: '/pickup-delivery/zones' },
+        ],
+      },
+      { label: 'Payments', menu: 'PAYMENTS', icon: CreditCard, to: '/payments' },
+      { label: 'Inventory', menu: 'INVENTORY', icon: Package, badge: '2', to: '/inventory' },
+      {
+        label: 'Staff',
+        menu: 'STAFF',
+        icon: UserCog,
+        to: '/staff',
+        children: [
+          { label: 'Staff Directory', to: '/staff' },
+          { label: 'Roles', to: '/staff/roles' },
+        ],
+      },
+      { label: 'Reports', menu: 'REPORTS', icon: ChartColumn },
+      { label: 'Notifications', menu: 'NOTIFICATIONS', icon: Bell, to: '/notifications' },
     ],
   },
   {
     title: 'Management',
     items: [
-      { label: 'Branches', icon: Store, to: '/branches' },
-      { label: 'Machines', icon: Cpu, to: '/machines' },
+      { label: 'Branches', menu: 'BRANCHES', icon: Store, to: '/branches' },
+      { label: 'Machines', menu: 'MACHINES', icon: Cpu, to: '/machines' },
       {
         label: 'Pricing',
+        menu: 'PRICING',
         icon: Tag,
         to: '/pricing',
         children: [
@@ -74,16 +98,26 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
           { label: 'Subscription Plans', to: '/pricing/subscriptions' },
         ],
       },
-      { label: 'Promotions', icon: Megaphone, to: '/promotions' },
-      { label: 'Settings', icon: Settings, to: '/settings' },
+      { label: 'Promotions', menu: 'PROMOTIONS', icon: Megaphone, to: '/promotions' },
+      { label: 'Subscription', menu: 'SETTINGS', icon: Gem, to: '/billing' },
+      { label: 'Audit Log', menu: 'SETTINGS', icon: History, to: '/audit' },
+      {
+        label: 'Settings',
+        menu: 'SETTINGS',
+        icon: Settings,
+        to: '/settings',
+        children: [
+          { label: 'My Preferences', to: '/settings' },
+          { label: 'Business', to: '/settings/business' },
+        ],
+      },
     ],
   },
-  // TODO: show only to platform admins once the API exposes the user's role
   {
     title: 'Platform',
     items: [
-      { label: 'Tenants', icon: Building2, to: '/tenants' },
-      { label: 'Subscription Plans', icon: Layers, to: '/platform/plans' },
+      { label: 'Tenants', menu: 'TENANTS', icon: Building2, to: '/tenants' },
+      { label: 'Subscription Plans', menu: 'PLATFORM_PLANS', icon: Layers, to: '/platform/plans' },
     ],
   },
 ]
@@ -102,11 +136,8 @@ function Sidebar({
   onCloseMobile,
 }: SidebarProps) {
   const { language, showNavBadges } = useSettings()
-  const { notifications } = useNotifications()
-  // Same count as the bell: unread alerts addressed to staff
-  const unread = notifications.filter(
-    (item) => !item.read && !item.archived && item.delivery !== 'scheduled' && item.audience !== 'customer',
-  ).length
+  // Same count as the bell, kept live by its notification stream
+  const { data: unread = 0 } = useGetUnreadCountQuery()
   const t = (text: string) => translate(text, language)
   const navigate = useNavigate()
   const me = useCurrentUser()
@@ -156,7 +187,9 @@ function Sidebar({
           aria-label="Main"
           className="flex-1 space-y-4 overflow-y-auto px-2 py-3"
         >
-          {NAV_GROUPS.map((group) => (
+          {NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter(({ menu }) => me.canOpen(menu)) }))
+            .filter((group) => group.items.length > 0)
+            .map((group) => (
             <div key={group.title}>
               <p
                 className={`px-2 pb-1.5 text-[9px] font-bold tracking-wider text-muted uppercase ${labelClass}`}

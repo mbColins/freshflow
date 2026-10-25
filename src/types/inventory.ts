@@ -27,7 +27,7 @@ export type PoStatus =
 export type TransferStatus = 'Requested' | 'In Transit' | 'Received' | 'Cancelled'
 
 export type InventoryItem = {
-  // The SKU
+  // The item's uuid; the API has no SKU
   id: string
   name: string
   category: string
@@ -48,6 +48,11 @@ export type InventoryItem = {
   lastMovementAt: string
   // Services that cannot run without this item
   services: string[]
+  // The branch holding the stock: the same product in two branches is two items
+  branchId: string
+  branchName: string
+  // Uuids of `services`, in the same order
+  serviceIds: string[]
 }
 
 export type Movement = {

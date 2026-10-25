@@ -43,9 +43,9 @@ export type CustomerPage = { items: CrmCustomer[]; total: number }
 
 export type CustomerListParams = { page?: number; size?: number }
 
-// One choice in GET /customer/dropdown (DropDownResponse). Only the id, uuid
-// and display name are filled in; there's no phone or email.
-export type CustomerOption = { id: number | null; uuid: string; name: string }
+// One choice in GET /customer/dropdown (DropDownResponse): the id, uuid,
+// display name and phone number. There's no email or address.
+export type CustomerOption = { id: number | null; uuid: string; name: string; phone: string }
 
 export type CustomerDropdownParams = {
   // Matches first name, last name or phone, case-insensitive
@@ -97,8 +97,24 @@ export const customerApi = api.injectEndpoints({
     getCustomerDropdown: build.query<CustomerOption[], CustomerDropdownParams | void>({
       query: (params) => ({ url: '/customer/dropdown', params: params ?? undefined }),
       transformResponse: (response: ApiResponse<unknown>) =>
-        (pageItems(response.content).items as { id?: number | null; uuid?: string; name?: string | null }[]).flatMap(
-          (raw) => (raw.uuid ? [{ id: raw.id ?? null, uuid: raw.uuid, name: raw.name?.trim() || 'Unnamed customer' }] : []),
+        (
+          pageItems(response.content).items as {
+            id?: number | null
+            uuid?: string
+            name?: string | null
+            phoneNumber?: string | null
+          }[]
+        ).flatMap((raw) =>
+          raw.uuid
+            ? [
+                {
+                  id: raw.id ?? null,
+                  uuid: raw.uuid,
+                  name: raw.name?.trim() || 'Unnamed customer',
+                  phone: raw.phoneNumber?.trim() ?? '',
+                },
+              ]
+            : [],
         ),
       providesTags: [DROPDOWN],
     }),

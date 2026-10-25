@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import type { ReactNode } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import useStaff from '../../hooks/useStaff'
 import {
   ArrowRight,
   Ban,
@@ -15,18 +16,15 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import {
-  PAYMENT_METHODS,
   PIPELINE_STATUSES,
   MESSAGE_TEMPLATES,
   QC_CHECKS,
-  STAFF,
   STATUSES,
 } from '../../constants/orders'
 import type { Permissions } from '../../constants/orders'
 import type {
   Order,
   OrderStatus,
-  PaymentMethod,
   QualityCheck,
 } from '../../types/order'
 import {
@@ -54,90 +52,9 @@ type OrderDrawerProps = {
   onClose: () => void
   onSetStatus: (id: string, status: OrderStatus) => void
   onAssign: (id: string, staff: string) => void
-  onRecordPayment: (
-    id: string,
-    payment: { amount: number; method: PaymentMethod; reference: string },
-  ) => void
   onQualityResult: (id: string, qc: QualityCheck) => void
   onPrint: (id: string) => void
   onCancel: (id: string) => void
-}
-
-function PaymentForm({
-  balance,
-  onSubmit,
-}: {
-  balance: number
-  onSubmit: (payment: {
-    amount: number
-    method: PaymentMethod
-    reference: string
-  }) => void
-}) {
-  const max = Math.round(balance)
-  const { register, handleSubmit, control } = useForm<{
-    amount: string
-    method: PaymentMethod
-    reference: string
-  }>({ defaultValues: { amount: String(max), method: 'Cash', reference: '' } })
-  const value = Number(useWatch({ control, name: 'amount' }))
-  const valid = value > 0 && value <= max
-
-  return (
-    <form
-      onSubmit={handleSubmit(({ amount, method, reference }) => {
-        if (valid) onSubmit({ amount: Number(amount), method, reference: reference.trim() })
-      })}
-      className="mt-2 grid gap-2 sm:grid-cols-4"
-    >
-      <div>
-        <label htmlFor="payment-amount" className={labelClass}>
-          Amount (XAF)
-        </label>
-        <input
-          id="payment-amount"
-          type="number"
-          min="1"
-          max={Math.round(balance)}
-          inputMode="numeric"
-          {...register('amount')}
-          className={fieldClass}
-        />
-      </div>
-      <div>
-        <label htmlFor="payment-method" className={labelClass}>
-          Method
-        </label>
-        <select
-          id="payment-method"
-          {...register('method')}
-          className={fieldClass}
-        >
-          {PAYMENT_METHODS.map((option) => (
-            <option key={option}>{option}</option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label htmlFor="payment-reference" className={labelClass}>
-          Reference
-        </label>
-        <input
-          id="payment-reference"
-          placeholder="Optional"
-          {...register('reference')}
-          className={fieldClass}
-        />
-      </div>
-      <button
-        type="submit"
-        disabled={!valid}
-        className={`${primaryButton} self-end`}
-      >
-        Record Payment
-      </button>
-    </form>
-  )
 }
 
 function QualitySection({
@@ -152,6 +69,7 @@ function QualitySection({
   const [checks, setChecks] = useState(order.qc.checks)
   const [failing, setFailing] = useState(false)
   const [reason, setReason] = useState('')
+  const [sendBackTo, setSendBackTo] = useState<'WASHING' | 'IRONING'>('WASHING')
   const allChecked = QC_CHECKS.every((check) => checks[check])
   const editable = canEdit && order.status === 'qa'
 
@@ -224,6 +142,18 @@ function QualitySection({
           <label htmlFor="qc-reason" className={labelClass}>
             Reason (required)
           </label>
+          <label htmlFor="qc-send-back" className={labelClass}>
+            Send back to
+          </label>
+          <select
+            id="qc-send-back"
+            value={sendBackTo}
+            onChange={(event) => setSendBackTo(event.target.value as 'WASHING' | 'IRONING')}
+            className={`${fieldClass} bg-white`}
+          >
+            <option value="WASHING">Washing</option>
+            <option value="IRONING">Ironing</option>
+          </select>
           <input
             id="qc-reason"
             placeholder="e.g. Stain still visible"
@@ -236,12 +166,12 @@ function QualitySection({
               type="button"
               disabled={!reason.trim()}
               onClick={() =>
-                onResult({ checks, result: 'failed', reason: reason.trim() })
+                onResult({ checks, result: 'failed', reason: reason.trim(), sendBackTo })
               }
               className={dangerButton}
             >
               <RotateCcw className="size-4" aria-hidden="true" />
-              Send Back to Washing
+              Send Back to {sendBackTo === 'IRONING' ? 'Ironing' : 'Washing'}
             </button>
             <button
               type="button"
@@ -313,11 +243,11 @@ function OrderDrawer({
   onClose,
   onSetStatus,
   onAssign,
-  onRecordPayment,
   onQualityResult,
   onPrint,
   onCancel,
 }: OrderDrawerProps) {
+  const staff = useStaff()
   const stageIndex = order
     ? PIPELINE_STATUSES.findIndex(({ id }) => id === order.status)
     : -1
@@ -469,8 +399,9 @@ function OrderDrawer({
                       }
                       className={`${fieldClass} mt-0.5 h-8 bg-white`}
                     >
-                      {STAFF.map((name) => (
-                        <option key={name}>{name}</option>
+                      {order.assignedTo === '' && <option value="">Unassigned</option>}
+                      {staff.map(({ uuid, name }) => (
+                        <option key={uuid}>{name}</option>
                       ))}
                     </select>
                   ) : (
@@ -586,11 +517,12 @@ function OrderDrawer({
               {permissions.payments &&
                 getBalance(order) > 0 &&
                 order.status !== 'cancelled' && (
-                  <PaymentForm
-                    key={`${order.id}-${order.payments.length}`}
-                    balance={getBalance(order)}
-                    onSubmit={(payment) => onRecordPayment(order.id, payment)}
-                  />
+                  <Link
+                    to={`/payments?order=${encodeURIComponent(order.id)}`}
+                    className={`${primaryButton} mt-2 w-fit`}
+                  >
+                    Record Payment ({formatXaf(getBalance(order))} due)
+                  </Link>
                 )}
             </DrawerSection>
           )}

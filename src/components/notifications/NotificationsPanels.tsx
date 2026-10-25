@@ -1,9 +1,8 @@
+import useChannelStats from '../../hooks/useChannelStats'
 import { ArrowRight, BarChart3, FileText, History, Moon, Pencil, Plus, SlidersHorizontal, Zap } from 'lucide-react'
 import {
   CATEGORIES,
-  CHANNEL_STATS,
   CHART_COLOR,
-  NOTIFICATION_ROLES,
 } from '../../constants/notifications'
 import type {
   AppNotification,
@@ -197,7 +196,8 @@ export function TemplatesPanel({
 // ---------- Analytics ----------
 
 export function NotificationAnalytics({ notifications }: { notifications: AppNotification[] }) {
-  const topChannel = Math.max(...CHANNEL_STATS.map(({ sent }) => sent), 1)
+  const channelStats = useChannelStats().stats
+  const topChannel = Math.max(...channelStats.map(({ sent }) => sent), 1)
   const types = CATEGORIES.map(({ value, label }) => ({ label, count: notifications.filter((item) => item.category === value).length }))
     .filter(({ count }) => count > 0)
     .sort((a, b) => b.count - a.count)
@@ -206,7 +206,7 @@ export function NotificationAnalytics({ notifications }: { notifications: AppNot
     <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Channel Performance" subtitle="Messages sent in the last 30 days, with the share delivered" icon={BarChart3}>
         <ul className="space-y-2">
-          {[...CHANNEL_STATS].sort((a, b) => b.sent - a.sent).map((stats) => (
+          {[...channelStats].sort((a, b) => b.sent - a.sent).map((stats) => (
             <li key={stats.channel} className="grid grid-cols-[5rem_1fr_7.5rem] items-center gap-2 text-xs" title={`${stats.channel}: ${stats.sent} sent, ${stats.delivered} delivered, ${stats.failed} failed`}>
               <span className="text-muted">{stats.channel}</span>
               <span className="h-4 rounded-sm bg-field">
@@ -214,7 +214,7 @@ export function NotificationAnalytics({ notifications }: { notifications: AppNot
               </span>
               <span className="text-right whitespace-nowrap tabular-nums">
                 <span className="font-bold text-ink">{stats.sent.toLocaleString('en-US')}</span>
-                <span className="ml-1.5 text-muted">{((stats.delivered / stats.sent) * 100).toFixed(1)}%</span>
+                <span className="ml-1.5 text-muted">{stats.sent === 0 ? '—' : `${((stats.delivered / stats.sent) * 100).toFixed(1)}%`}</span>
               </span>
             </li>
           ))}
@@ -245,9 +245,12 @@ export function NotificationAnalytics({ notifications }: { notifications: AppNot
 
 export function PreferencesPanel({
   preferences,
+  roleNames,
   canManage,
   onChange,
 }: {
+  // The roles the business has, one row each
+  roleNames: string[]
   preferences: NotificationPreferences
   canManage: boolean
   onChange: (preferences: NotificationPreferences) => void
@@ -279,7 +282,7 @@ export function PreferencesPanel({
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {NOTIFICATION_ROLES.map((role) => (
+                {roleNames.map((role) => (
                   <tr key={role}>
                     <th scope="row" className="py-2 pr-3 font-semibold whitespace-nowrap text-ink">{role}</th>
                     {CATEGORIES.map(({ value, label }) => (

@@ -1,5 +1,4 @@
 import type { BadgeTone } from '../components/ui/Badge'
-import type { OrderRole } from '../types/order'
 import type { PayMethod, PaymentFilters, TxnStatus } from '../types/payment'
 
 export const TXN_STATUSES: { id: TxnStatus; label: string; tone: BadgeTone }[] = [
@@ -19,22 +18,7 @@ export const PAY_METHODS: { id: PayMethod; color: string; digital: boolean }[] =
   { id: 'Card', color: '#1baf7a', digital: true },
   { id: 'Bank Transfer', color: '#eda100', digital: true },
   { id: 'Account Credit', color: '#6250d6', digital: false },
-]
-
-// Providers are business configuration, not fixed in the interface.
-// TODO: load from payment settings; these are this sample branch's providers.
-export const PAYMENT_PROVIDERS: {
-  name: string
-  method: PayMethod
-  status: 'Operational' | 'Service Degraded'
-  responseMs: number
-  successRate: number
-  lastSyncMin: number
-}[] = [
-  { name: 'MTN MoMo', method: 'Mobile Money', status: 'Operational', responseMs: 1200, successRate: 99.4, lastSyncMin: 2 },
-  { name: 'Orange Money', method: 'Mobile Money', status: 'Service Degraded', responseMs: 4100, successRate: 91.2, lastSyncMin: 14 },
-  { name: 'Visa / Mastercard POS', method: 'Card', status: 'Operational', responseMs: 900, successRate: 98.9, lastSyncMin: 1 },
-  { name: 'Bank Wire Sync', method: 'Bank Transfer', status: 'Operational', responseMs: 2600, successRate: 100, lastSyncMin: 35 },
+  { id: 'Other', color: '#94a3b8', digital: false },
 ]
 
 export const REFUND_REASONS = [
@@ -86,13 +70,6 @@ export const OVERVIEW_SERIES = {
 export type OverviewRange = keyof typeof OVERVIEW_SERIES
 export type OverviewMetric = 'revenue' | 'transactions' | 'refunds'
 
-// Sample figures for the other branches until reporting exists;
-// the current branch's row is computed from live data
-export const OTHER_BRANCH_FINANCIALS = [
-  { branch: 'Akwa Branch', revenue: 186_400, transactions: 13, outstanding: 92_000, refunds: 4_000 },
-  { branch: 'Bonapriso Branch', revenue: 131_250, transactions: 9, outstanding: 41_500, refunds: 0 },
-]
-
 export const EMPTY_PAYMENT_FILTERS: PaymentFilters = {
   query: '',
   status: '',
@@ -110,11 +87,4 @@ export type PaymentPermissions = {
   approve: boolean
   // Cash adjustments, closing the register, reconciliation
   reconcile: boolean
-}
-
-export const PAYMENT_PERMISSIONS: Record<OrderRole, PaymentPermissions> = {
-  admin: { view: true, record: true, approve: true, reconcile: true },
-  manager: { view: true, record: true, approve: true, reconcile: true },
-  receptionist: { view: true, record: true, approve: false, reconcile: false },
-  staff: { view: false, record: false, approve: false, reconcile: false },
 }

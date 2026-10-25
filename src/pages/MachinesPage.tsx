@@ -24,15 +24,19 @@ import {
   UpcomingMaintenancePanel,
 } from '../components/machines/MachinesListParts'
 import type { MachineActions, MachineSort } from '../components/machines/MachinesListParts'
-import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
-import { EMPTY_MACHINE_FILTERS, MACHINE_PERMISSIONS } from '../constants/machines'
-import { CURRENT_USER, ORDER_ROLES } from '../constants/orders'
+import { primaryButton, secondaryButton } from '../components/orders/styles'
+import { EMPTY_MACHINE_FILTERS } from '../constants/machines'
+import { buildMachineSeed } from '../constants/machineSeed'
 import useBranches from '../hooks/useBranches'
+import useCurrentUser from '../hooks/useCurrentUser'
 import useLocalStorage from '../hooks/useLocalStorage'
-import useMachines, { machineStore } from '../hooks/useMachines'
+import { machineStore, useMachineList } from '../hooks/useMachines'
+import useMachinePermissions from '../hooks/useMachinePermissions'
 import useNow from '../hooks/useNow'
+import { useCreateMachineMutation } from '../services/machineApi'
 import type { MachineFilters } from '../types/machine'
-import type { OrderRole } from '../types/order'
+import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../utils/apiErrors'
+import { toMachineRequest } from '../utils/machineMapping'
 import {
   compareMachines,
   getMachineAlerts,
@@ -55,20 +59,23 @@ const VIEWS = [
 
 function MachinesPage() {
   const now = useNow()
-  const machines = useMachines()
+  const { machines, isLoading, isError, isFetching, error: loadError, refetch } = useMachineList()
   const branches = useBranches()
+  const me = useCurrentUser().name || 'You'
+  const [createMachine] = useCreateMachineMutation()
+  const [importing, setImporting] = useState(false)
   const [filters, setFilters] = useState<MachineFilters>(EMPTY_MACHINE_FILTERS)
   const [sort, setSort] = useState<MachineSort>({ key: 'name', descending: false })
   const [dialog, setDialog] = useState<MachineDialogState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [role, setRole] = useLocalStorage<OrderRole>('machines.role', 'admin')
   const [view, setView] = useLocalStorage<MachineView>('machines.view', 'grid')
   const searchRef = useRef<HTMLInputElement>(null)
   const maintenanceRef = useRef<HTMLDivElement>(null)
 
-  const permissions = MACHINE_PERMISSIONS[role]
-  const branchOptions = branches.map(({ id, name }) => ({ id, name }))
-  const branchName = (id: string) => branches.find((branch) => branch.id === id)?.name ?? id
+  const permissions = useMachinePermissions()
+  // Machines refer to their branch by the API's uuid, not the branch code
+  const branchOptions = branches.map(({ uuid, name }) => ({ id: uuid, name }))
+  const branchName = (id: string) => branchOptions.find((branch) => branch.id === id)?.name ?? id
   // Everything except the status filter, so the status cards keep their counts
   const scoped = machines.filter((machine) => matchesMachineFilters(machine, { ...filters, status: '' }, now))
   const filtered = scoped
@@ -105,9 +112,33 @@ function MachinesPage() {
     const machine = machines.find(({ id }) => id === machineId)!
     const offline = machine.status === 'offline'
     machineStore.update(machineId, (current) =>
-      withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, CURRENT_USER, offline ? 'Marked available' : 'Marked unavailable'),
+      withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, me, offline ? 'Marked available' : 'Marked unavailable'),
     )
     setToast(`${machine.name} marked ${offline ? 'available' : 'unavailable'}`)
+  }
+
+  // One-off: stores the demo fleet that used to be this page's mock data,
+  // spread over the business's branches. Remove with constants/machineSeed.ts
+  async function handleImport() {
+    if (branchOptions.length === 0) {
+      setToast('Create a branch first; machines belong to a branch.')
+      return
+    }
+    setImporting(true)
+    let stored = 0
+    try {
+      for (const { floor, ...profile } of buildMachineSeed()) {
+        const branchId = branchOptions[floor % branchOptions.length].id
+        await createMachine(toMachineRequest({ ...profile, uuid: '', branchId }, true)).unwrap()
+        stored += 1
+      }
+      setToast(`Imported ${stored} machines`)
+    } catch (error) {
+      const reason = serverMessage(error) ?? errorMessage(error as Parameters<typeof errorMessage>[0], 'The server refused it.') ?? NETWORK_ERROR_MESSAGE
+      setToast(`Imported ${stored} machines, then stopped: ${reason}`)
+    } finally {
+      setImporting(false)
+    }
   }
 
   function handleSort(key: MachineSortKey) {
@@ -160,18 +191,34 @@ function MachinesPage() {
             )}
           </div>
         </div>
-        <label className="flex w-fit items-center gap-2 text-[11px] whitespace-nowrap text-muted">
-          Viewing as
-          <select value={role} onChange={(event) => setRole(event.target.value as OrderRole)} className={`${fieldClass} h-8 w-auto!`}>
-            {ORDER_ROLES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
+      {isLoading ? (
+        <div className="animate-pulse space-y-4" aria-busy="true">
+          <p className="sr-only" role="status">Loading machines…</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div key={index} className="h-[76px] rounded-xl bg-white ring-1 ring-line" />
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div key={index} className="h-40 rounded-xl bg-white ring-1 ring-line" />
+            ))}
+          </div>
+        </div>
+      ) : isError && machines.length === 0 ? (
+        <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">Couldn’t load the machines</h2>
+          <p className="max-w-md text-xs text-muted">
+            {serverMessage(loadError) ?? errorMessage(loadError, 'The server refused the request.') ?? NETWORK_ERROR_MESSAGE}
+          </p>
+          <button type="button" onClick={() => void refetch()} disabled={isFetching} className={`${secondaryButton} mt-2`}>
+            {isFetching ? 'Retrying…' : 'Try Again'}
+          </button>
+        </div>
+      ) : (
+      <>
       {critical && (
         <section className="flex flex-wrap items-center gap-3 rounded-xl bg-danger/10 px-4 py-3 ring-1 ring-danger/30" role="alert">
           <TriangleAlert className="size-5 shrink-0 text-danger" aria-hidden="true" />
@@ -230,10 +277,15 @@ function MachinesPage() {
           <h2 className="text-sm font-bold text-ink">No machines registered</h2>
           <p className="text-xs text-muted">Add your first machine to start monitoring laundry equipment.</p>
           {permissions.manage && (
-            <button type="button" onClick={() => setDialog({ name: 'add' })} className={`${primaryButton} mt-2`}>
-              <Plus className="size-4" aria-hidden="true" />
-              Add Machine
-            </button>
+            <div className="mt-2 flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => setDialog({ name: 'add' })} className={primaryButton}>
+                <Plus className="size-4" aria-hidden="true" />
+                Add Machine
+              </button>
+              <button type="button" onClick={() => void handleImport()} disabled={importing} className={secondaryButton}>
+                {importing ? 'Importing…' : 'Import sample fleet (40 machines)'}
+              </button>
+            </div>
           )}
         </div>
       ) : filtered.length === 0 ? (
@@ -258,6 +310,8 @@ function MachinesPage() {
       </div>
 
       <DowntimePanel machines={scoped} />
+      </>
+      )}
 
       {permissions.manage && (
         <button

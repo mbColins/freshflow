@@ -81,7 +81,7 @@ export function matchesInventoryFilters(
   const needle = filters.query.trim().toLowerCase()
   if (
     needle &&
-    ![item.name, item.id, item.category, item.supplier, item.batch, item.location].some(
+    ![item.name, item.branchName, item.category, item.supplier, item.batch, item.location].some(
       (field) => field.toLowerCase().includes(needle),
     )
   ) {
@@ -98,7 +98,7 @@ export function matchesInventoryFilters(
 export function itemsToCsv(items: InventoryItem[], now: number, includeCosts: boolean) {
   const columns: [string, (item: InventoryItem) => string | number][] = [
     ['Item', (item) => item.name],
-    ['SKU', (item) => item.id],
+    ['Branch', (item) => item.branchName],
     ['Category', (item) => item.category],
     ['Current stock', (item) => item.stock],
     ['Unit', (item) => item.unit],

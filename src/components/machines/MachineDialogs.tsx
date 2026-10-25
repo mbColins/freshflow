@@ -11,14 +11,16 @@ import {
   TECHNICIANS,
 } from '../../constants/machines'
 import type { MachinePermissions } from '../../constants/machines'
-import { CURRENT_USER } from '../../constants/orders'
+import useCurrentUser from '../../hooks/useCurrentUser'
 import useMachines, { machineStore } from '../../hooks/useMachines'
 import useNow from '../../hooks/useNow'
+import { useCreateMachineMutation, useUpdateMachineMutation } from '../../services/machineApi'
 import type { Machine, MachineProfile } from '../../types/machine'
+import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../../utils/apiErrors'
+import { toMachineRequest } from '../../utils/machineMapping'
 import {
   COMPARE_MACHINE_METRICS,
   assignJob,
-  createMachine,
   emptyProfile,
   formatRuntime,
   getTypeForService,
@@ -44,6 +46,11 @@ import { MachineStatusBadge } from './MachineBits'
 import MachineWizard from './MachineWizard'
 import type { MachineDialogName } from './MachinesListParts'
 import FormField from '../ui/FormField'
+
+// The signed-in person's name, for "reported by" lines
+function CurrentUserName() {
+  return <>{useCurrentUser().name || 'you'}</>
+}
 
 function Options({ items }: { items: readonly string[] }) {
   return (
@@ -107,7 +114,7 @@ function FaultDialog({ machine, onClose, onSubmit }: { machine: Machine; onClose
         <FormField label="Estimated downtime (minutes)" htmlFor="fault-downtime">
           <input id="fault-downtime" type="number" min={0} step={15} {...register('downtimeMin', { setValueAs: (value) => Math.max(0, Number(value)) })} className={fieldClass} />
         </FormField>
-        <p className="text-[11px] text-muted sm:col-span-2">Reported by {CURRENT_USER}, now.</p>
+        <p className="text-[11px] text-muted sm:col-span-2">Reported by <CurrentUserName />, now.</p>
         {stops ? (
           <p className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-ink sm:col-span-2" role="alert">
             <TriangleAlert className="mt-px size-4 shrink-0 text-danger" aria-hidden="true" />
@@ -352,7 +359,7 @@ function TransferDialog({
           <input id="transfer-reason" placeholder="e.g. Rebalancing dryer capacity" value={reason} onChange={(event) => setReason(event.target.value)} className={fieldClass} />
         </FormField>
         <p className="text-[11px] text-muted sm:col-span-2">
-          Transfer date {formatDay(toDateKey(now), true)} · responsible: {CURRENT_USER}. The move is kept in the machine’s transfer history.
+          Transfer date {formatDay(toDateKey(now), true)} · responsible: <CurrentUserName />. The move is kept in the machine’s transfer history.
         </p>
         {busy ? (
           <p className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-ink sm:col-span-2" role="alert">
@@ -552,7 +559,12 @@ export function MachineDialogHost({
 }) {
   const machines = useMachines()
   const now = useNow()
+  const me = useCurrentUser().name || 'You'
+  const [createMachine] = useCreateMachineMutation()
+  const [updateMachine] = useUpdateMachineMutation()
   if (!dialog) return null
+  const failure = (error: unknown, rejected: string) =>
+    serverMessage(error) ?? errorMessage(error as Parameters<typeof errorMessage>[0], rejected) ?? NETWORK_ERROR_MESSAGE
   const branchName = (id: string) => branches.find((branch) => branch.id === id)?.name ?? id
   const done = (message: string) => {
     onToast(message)
@@ -569,9 +581,13 @@ export function MachineDialogHost({
         takenIds={machines.map(({ id }) => id)}
         branches={branches}
         onClose={onClose}
-        onSave={(profile: MachineProfile) => {
-          machineStore.add(createMachine(profile, CURRENT_USER, now))
-          done(`${profile.name} registered as ${profile.id}`)
+        onSave={async (profile: MachineProfile) => {
+          try {
+            await createMachine(toMachineRequest(profile, true)).unwrap()
+            done(`${profile.name} registered as ${profile.id}`)
+          } catch (error) {
+            onToast(failure(error, `Couldn’t register ${profile.name}.`))
+          }
         }}
       />
     )
@@ -590,9 +606,14 @@ export function MachineDialogHost({
           takenIds={[]}
           branches={branches}
           onClose={onClose}
-          onSave={(profile) => {
-            update((current) => withActivity({ ...current, ...profile, branchId: current.branchId }, CURRENT_USER, 'Machine details edited'))
-            done(`${profile.name} updated`)
+          onSave={async (profile) => {
+            try {
+              await updateMachine({ id: machine.uuid, changes: toMachineRequest(profile, false) }).unwrap()
+              update((current) => withActivity(current, me, 'Machine details edited'))
+              done(`${profile.name} updated`)
+            } catch (error) {
+              onToast(failure(error, `Couldn’t update ${profile.name}.`))
+            }
           }}
         />
       )
@@ -602,7 +623,7 @@ export function MachineDialogHost({
           machine={machine}
           onClose={onClose}
           onSubmit={(input) => {
-            update((current) => reportFault(current, input, CURRENT_USER))
+            update((current) => reportFault(current, input, me))
             done(input.severity === 'Critical' || input.severity === 'High' ? `${machine.name} taken out of service` : `Fault logged for ${machine.name}`)
           }}
         />
@@ -614,7 +635,7 @@ export function MachineDialogHost({
           now={now}
           onClose={onClose}
           onSubmit={(input) => {
-            update((current) => scheduleMaintenance(current, input, CURRENT_USER))
+            update((current) => scheduleMaintenance(current, input, me))
             done(`${input.type} scheduled for ${machine.name} on ${formatDay(input.date, true)}`)
           }}
         />
@@ -628,7 +649,7 @@ export function MachineDialogHost({
           onClose={onClose}
           onSubmit={(machineId, input) => {
             const target = machines.find(({ id }) => id === machineId)!
-            machineStore.update(machineId, (current) => assignJob(current, input, CURRENT_USER))
+            machineStore.update(machineId, (current) => assignJob(current, input, me))
             done(target.job ? `${input.orderId} queued on ${target.name}` : `${input.orderId} started on ${target.name}`)
           }}
         />
@@ -640,15 +661,21 @@ export function MachineDialogHost({
           branches={branches}
           now={now}
           onClose={onClose}
-          onSubmit={(branchId, reason) => {
-            update((current) =>
-              withActivity(
-                { ...current, branchId, transfers: [{ at: new Date().toISOString(), from: current.branchId, to: branchId, reason, by: CURRENT_USER }, ...current.transfers] },
-                CURRENT_USER,
-                `Transferred from ${branchName(current.branchId)} to ${branchName(branchId)}`,
-              ),
-            )
-            done(`${machine.name} transferred to ${branchName(branchId)}`)
+          onSubmit={async (branchId, reason) => {
+            try {
+              // The move itself is stored; the reason and history stay on this page
+              await updateMachine({ id: machine.uuid, changes: { branch: branchId } }).unwrap()
+              update((current) =>
+                withActivity(
+                  { ...current, transfers: [{ at: new Date().toISOString(), from: machine.branchId, to: branchId, reason, by: me }, ...current.transfers] },
+                  me,
+                  `Transferred from ${branchName(machine.branchId)} to ${branchName(branchId)}`,
+                ),
+              )
+              done(`${machine.name} transferred to ${branchName(branchId)}`)
+            } catch (error) {
+              onToast(failure(error, `Couldn’t transfer ${machine.name}.`))
+            }
           }}
         />
       )
@@ -661,7 +688,7 @@ export function MachineDialogHost({
             update((current) =>
               withActivity(
                 { ...current, status: 'retired', statusNote: `Retired: ${reason} (final condition: ${condition.toLowerCase()})`, queue: [] },
-                CURRENT_USER,
+                me,
                 `Machine retired at ${current.totalCycles.toLocaleString('en-US')} cycles: ${reason}`,
               ),
             )

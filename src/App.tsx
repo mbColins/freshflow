@@ -16,6 +16,8 @@ import MachinesPage from './pages/MachinesPage'
 import NotificationsPage from './pages/NotificationsPage'
 import OperationsPage from './pages/OperationsPage'
 import LogisticsPage from './pages/LogisticsPage'
+import DeliveryZonesPage from './pages/DeliveryZonesPage'
+import DriversPage from './pages/DriversPage'
 import OrdersPage from './pages/OrdersPage'
 import OtpPage from './pages/OtpPage'
 import PaymentsPage from './pages/PaymentsPage'
@@ -25,8 +27,12 @@ import PromotionsPage from './pages/PromotionsPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import ServiceDetailPage from './pages/ServiceDetailPage'
 import ServicesPage from './pages/ServicesPage'
+import AuditLogPage from './pages/AuditLogPage'
+import BillingPage from './pages/BillingPage'
+import BusinessSettingsPage from './pages/BusinessSettingsPage'
 import SettingsPage from './pages/SettingsPage'
 import StaffPage from './pages/StaffPage'
+import RolesPage from './pages/RolesPage'
 import SubscriptionPlansPage from './pages/SubscriptionPlansPage'
 import TenantsPage from './pages/TenantsPage'
 import useSettings from './hooks/useSettings'
@@ -52,9 +58,12 @@ function App() {
             <Route path="/customers" element={<CustomersPage />} />
             <Route path="/customers/:customerId" element={<CustomerProfilePage />} />
             <Route path="/pickup-delivery" element={<LogisticsPage />} />
+            <Route path="/pickup-delivery/drivers" element={<DriversPage />} />
+            <Route path="/pickup-delivery/zones" element={<DeliveryZonesPage />} />
             <Route path="/payments" element={<PaymentsPage />} />
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/staff" element={<StaffPage />} />
+            <Route path="/staff/roles" element={<RolesPage />} />
             <Route path="/branches" element={<BranchesPage />} />
             <Route path="/branches/:branchId" element={<BranchDetailPage />} />
             <Route path="/machines" element={<MachinesPage />} />
@@ -63,6 +72,9 @@ function App() {
             <Route path="/pricing/subscriptions" element={<SubscriptionPlansPage />} />
             <Route path="/promotions" element={<PromotionsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/business" element={<BusinessSettingsPage />} />
+            <Route path="/audit" element={<AuditLogPage />} />
+            <Route path="/billing" element={<BillingPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/operations" element={<OperationsPage />} />
             <Route path="/services" element={<ServicesPage />} />

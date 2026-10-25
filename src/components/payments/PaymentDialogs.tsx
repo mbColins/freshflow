@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Printer } from 'lucide-react'
 import {
-  PAYMENT_PROVIDERS,
   PAY_METHODS,
   REFUND_REASONS,
   REMINDER_CHANNELS,
   VARIANCE_REASONS,
 } from '../../constants/payments'
+import { useGetReceiptQuery } from '../../services/paymentApi'
+import type { PaymentProvider } from '../../services/paymentApi'
 import type {
   PayMethod,
   Receivable,
@@ -16,7 +17,7 @@ import type {
 import { formatDate } from '../../utils/customers'
 import { formatClock } from '../../utils/logistics'
 import { formatXaf } from '../../utils/orders'
-import { getOutstanding, getRefundable, getTxnStatus } from '../../utils/payments'
+import { getOutstanding, getRefundable, getTxnStatus, isDigital } from '../../utils/payments'
 import {
   dangerButton,
   fieldClass,
@@ -55,22 +56,28 @@ export type PaymentInput = {
   method: PayMethod
   provider: string
   reference: string
+  // Cash only: what the customer handed over, for the change
+  cashReceived?: number
 }
 
 const RECORD_STEPS = ['Select Order', 'Enter Payment', 'Confirmation', 'Receipt']
 
 export function RecordPaymentDialog({
   receivables,
+  providers: configured,
   initialReceivableId,
   onClose,
   onRecord,
   onPrint,
 }: {
   receivables: Receivable[]
+  // The branch's payment providers, from GET /payment-providers
+  providers: PaymentProvider[]
   initialReceivableId: string
   onClose: () => void
-  // Returns the transaction that was created
-  onRecord: (input: PaymentInput) => Transaction
+  // Resolves with the transaction that was created; rejects with an Error
+  // whose message says why the server refused
+  onRecord: (input: PaymentInput) => Promise<Transaction>
   onPrint: (txnId: string) => void
 }) {
   const open = receivables.filter((receivable) => getOutstanding(receivable) > 0)
@@ -84,6 +91,8 @@ export function RecordPaymentDialog({
   const [reference, setReference] = useState('')
   const [received, setReceived] = useState('')
   const [result, setResult] = useState<Transaction | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const needle = query.trim().toLowerCase()
   const matches = open.filter(
@@ -93,8 +102,8 @@ export function RecordPaymentDialog({
   )
   const outstanding = receivable ? getOutstanding(receivable) : 0
   const value = Number(amount) || 0
-  const providers = PAYMENT_PROVIDERS.filter((item) => item.method === method)
-  const needsProvider = providers.length > 0
+  const providers = configured.filter((item) => item.method === method && item.enabled)
+  const needsProvider = isDigital(method)
   const change = method === 'Cash' && received ? Number(received) - value : 0
   const paymentValid =
     value > 0 &&
@@ -108,18 +117,27 @@ export function RecordPaymentDialog({
     setStep(1)
   }
 
-  function confirm() {
+  async function confirm() {
     if (!receivable) return
-    setResult(
-      onRecord({
-        receivableId: receivable.id,
-        amount: value,
-        method,
-        provider: needsProvider ? provider : '',
-        reference: reference.trim(),
-      }),
-    )
-    setStep(3)
+    setSaving(true)
+    setError(null)
+    try {
+      setResult(
+        await onRecord({
+          receivableId: receivable.id,
+          amount: value,
+          method,
+          provider: needsProvider ? provider : '',
+          reference: reference.trim(),
+          ...(method === 'Cash' && received ? { cashReceived: Number(received) } : {}),
+        }),
+      )
+      setStep(3)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The payment wasn’t recorded.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -167,9 +185,9 @@ export function RecordPaymentDialog({
               </button>
             )}
             {step === 2 && (
-              <button type="button" onClick={confirm} className={primaryButton}>
+              <button type="button" onClick={() => void confirm()} disabled={saving} className={primaryButton}>
                 <Check className="size-4" aria-hidden="true" />
-                Confirm Payment
+                {saving ? 'Recording…' : 'Confirm Payment'}
               </button>
             )}
           </>
@@ -314,13 +332,18 @@ export function RecordPaymentDialog({
                     className={fieldClass}
                   >
                     <option value="">Choose a provider…</option>
-                    {providers.map(({ name, status }) => (
+                    {providers.map(({ provider: name, status }) => (
                       <option key={name} value={name}>
                         {name}
-                        {status !== 'Operational' ? ' (degraded)' : ''}
+                        {status !== 'OPERATIONAL' ? ' (degraded)' : ''}
                       </option>
                     ))}
                   </select>
+                  {providers.length === 0 && (
+                    <p className="mt-1 text-[11px] text-danger">
+                      No {method.toLowerCase()} provider is enabled for this branch. The owner or a manager can set them up.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label htmlFor="pay-reference" className={labelClass}>
@@ -337,8 +360,7 @@ export function RecordPaymentDialog({
               </>
             )}
           </div>
-          {PAYMENT_PROVIDERS.find(({ name }) => name === provider)?.status ===
-            'Service Degraded' && (
+          {providers.find((item) => item.provider === provider)?.status === 'DEGRADED' && (
             <p className="rounded-lg bg-warning/10 p-3 text-xs font-semibold text-warning">
               This provider is degraded right now. Confirm the customer received a
               success message, or use another payment method.
@@ -362,6 +384,12 @@ export function RecordPaymentDialog({
             {reference && ` · reference ${reference}`}
           </p>
         </div>
+      )}
+
+      {error && step === 2 && (
+        <p role="alert" className="mt-3 rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+          {error}
+        </p>
       )}
 
       {step === 3 && result && (
@@ -582,8 +610,12 @@ export function ReminderDialog({
 }: {
   receivable: Receivable
   onClose: () => void
-  onSend: (channel: string, scheduled: boolean) => void
+  // `scheduledFor` is a datetime-local value, empty to send now. Rejects with
+  // an Error whose message says why the server refused
+  onSend: (channel: string, message: string, scheduledFor: string) => Promise<void>
 }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [channel, setChannel] = useState(REMINDER_CHANNELS[0])
   const [sendAt, setSendAt] = useState('')
   const [message, setMessage] = useState(
@@ -603,16 +635,31 @@ export function ReminderDialog({
           </button>
           <button
             type="button"
-            disabled={!message.trim()}
-            onClick={() => onSend(channel, sendAt !== '')}
+            disabled={!message.trim() || saving}
+            onClick={async () => {
+              setSaving(true)
+              setError(null)
+              try {
+                await onSend(channel, message.trim(), sendAt)
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : 'The reminder wasn’t sent.')
+              } finally {
+                setSaving(false)
+              }
+            }}
             className={primaryButton}
           >
-            {sendAt ? 'Schedule Reminder' : 'Send Now'}
+            {saving ? 'Sending…' : sendAt ? 'Schedule Reminder' : 'Send Now'}
           </button>
         </>
       }
     >
       <div className="space-y-3">
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            {error}
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="reminder-channel" className={labelClass}>
@@ -810,8 +857,165 @@ export function CloseSessionDialog({
   )
 }
 
+// ---------- Open the register ----------
+
+export function OpenSessionDialog({
+  suggestedFloat,
+  onClose,
+  onOpen,
+}: {
+  // What the last session was counted at, if any
+  suggestedFloat: number
+  onClose: () => void
+  onOpen: (register: string, openingFloat: number) => Promise<void>
+}) {
+  const [register, setRegister] = useState('Main register')
+  const [float, setFloat] = useState(suggestedFloat > 0 ? String(suggestedFloat) : '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const value = float === '' ? null : Number(float)
+  const valid = register.trim() !== '' && value !== null && value >= 0
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      variant="sm"
+      title="Open Cash Register"
+      subtitle="Cash payments can only be recorded while a register is open."
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!valid || saving}
+            onClick={async () => {
+              if (value === null) return
+              setSaving(true)
+              setError(null)
+              try {
+                await onOpen(register.trim(), value)
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : 'The register wasn’t opened.')
+              } finally {
+                setSaving(false)
+              }
+            }}
+            className={primaryButton}
+          >
+            {saving ? 'Opening…' : 'Open Register'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            {error}
+          </p>
+        )}
+        <div>
+          <label htmlFor="open-register" className={labelClass}>
+            Register
+          </label>
+          <input id="open-register" autoFocus value={register} onChange={(event) => setRegister(event.target.value)} className={fieldClass} />
+        </div>
+        <div>
+          <label htmlFor="open-float" className={labelClass}>
+            Opening float in the drawer (XAF)
+          </label>
+          <input
+            id="open-float"
+            type="number"
+            min="0"
+            inputMode="numeric"
+            value={float}
+            onChange={(event) => setFloat(event.target.value)}
+            className={fieldClass}
+          />
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ---------- Resolve an exception ----------
+
+export function ResolveExceptionDialog({
+  reason,
+  onClose,
+  onResolve,
+}: {
+  reason: string
+  onClose: () => void
+  onResolve: (resolution: string) => Promise<void>
+}) {
+  const [resolution, setResolution] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      variant="sm"
+      title="Resolve Exception"
+      subtitle={reason}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!resolution.trim() || saving}
+            onClick={async () => {
+              setSaving(true)
+              setError(null)
+              try {
+                await onResolve(resolution.trim())
+              } catch (caught) {
+                setError(caught instanceof Error ? caught.message : 'The exception wasn’t resolved.')
+              } finally {
+                setSaving(false)
+              }
+            }}
+            className={primaryButton}
+          >
+            {saving ? 'Saving…' : 'Mark Resolved'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            {error}
+          </p>
+        )}
+        <div>
+          <label htmlFor="resolve-note" className={labelClass}>
+            What was done
+          </label>
+          <textarea
+            id="resolve-note"
+            rows={3}
+            autoFocus
+            value={resolution}
+            onChange={(event) => setResolution(event.target.value)}
+            className={`${fieldClass} h-auto py-2`}
+          />
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ---------- Receipt ----------
 
+// The receipt as the server prints it: business, lines, totals, change
 export function TxnReceiptDialog({
   txn,
   onClose,
@@ -819,6 +1023,9 @@ export function TxnReceiptDialog({
   txn: Transaction
   onClose: () => void
 }) {
+  const { data: receipt, isLoading, isError, refetch } = useGetReceiptQuery(txn.uuid)
+  const money = (value: number) => formatXaf(value)
+
   return (
     <Modal
       open
@@ -830,51 +1037,114 @@ export function TxnReceiptDialog({
           <button type="button" onClick={onClose} className={secondaryButton}>
             Close
           </button>
-          <button type="button" onClick={() => window.print()} className={primaryButton}>
+          <button type="button" onClick={() => window.print()} disabled={!receipt} className={primaryButton}>
             <Printer className="size-4" aria-hidden="true" />
             Print Receipt
           </button>
         </>
       }
     >
-      <div className="print-area space-y-3 bg-white text-xs text-ink">
-        <div className="text-center">
-          <p className="text-sm font-bold">FreshFlow Laundry</p>
-          <p className="text-[11px] text-muted">Laundry & Care Services · {txn.branch}</p>
+      {isLoading ? (
+        <div className="animate-pulse space-y-3" aria-busy="true">
+          <p className="sr-only" role="status">Loading the receipt…</p>
+          <div className="mx-auto h-4 w-32 rounded bg-field" />
+          <div className="h-28 rounded bg-field" />
+          <div className="h-8 rounded bg-field" />
         </div>
-        <dl className="space-y-1 border-y border-dashed border-line py-2">
-          {(
-            [
-              ['Receipt', txn.receipt],
-              ['Transaction', txn.id],
-              ['Date', `${formatDate(txn.at)}, ${formatClock(txn.at)}`],
-              ['Customer', txn.customer],
-              ['Order', txn.orderId],
-              ['Payment method', txn.provider ? `${txn.method} (${txn.provider})` : txn.method],
-              ['Reference', txn.reference],
-              ['Cashier', txn.cashier],
-            ] as [string, string][]
-          ).map(([label, value]) => (
-            <div key={label} className="flex justify-between gap-4">
-              <dt className="text-muted">{label}</dt>
-              <dd className="text-right font-semibold">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className="flex justify-between gap-4 text-sm font-bold">
-          <span>Paid</span>
-          <span className="tabular-nums">{formatXaf(txn.amount)}</span>
+      ) : isError || !receipt ? (
+        <div role="alert" className="space-y-2 text-center text-xs">
+          <p className="font-semibold text-danger">Couldn’t load the receipt.</p>
+          <button type="button" onClick={() => void refetch()} className={secondaryButton}>
+            Try Again
+          </button>
         </div>
-        {txn.refunded > 0 && (
-          <div className="flex justify-between gap-4">
-            <span className="text-muted">Refunded</span>
-            <span className="tabular-nums">−{formatXaf(txn.refunded)}</span>
+      ) : (
+        <div className="print-area space-y-3 bg-white text-xs text-ink">
+          <div className="text-center">
+            {receipt.logo && (
+              <img src={`data:image/png;base64,${receipt.logo}`} alt="" className="mx-auto mb-1 max-h-12" />
+            )}
+            <p className="text-sm font-bold">{receipt.businessName}</p>
+            <p className="text-[11px] text-muted">
+              {[receipt.slogan, receipt.branchName].filter(Boolean).join(' · ')}
+            </p>
+            {(receipt.branchAddress || receipt.phone) && (
+              <p className="text-[11px] text-muted">{[receipt.branchAddress, receipt.phone].filter(Boolean).join(' · ')}</p>
+            )}
           </div>
-        )}
-        <p className="border-t border-dashed border-line pt-2 text-center text-sm font-bold tracking-widest uppercase">
-          {getTxnStatus(txn.status).label}
-        </p>
-      </div>
+          <dl className="space-y-1 border-y border-dashed border-line py-2">
+            {(
+              [
+                ['Receipt', receipt.receipt],
+                ['Transaction', receipt.code],
+                ['Date', `${formatDate(receipt.at)}, ${formatClock(receipt.at)}`],
+                ['Customer', receipt.customer],
+                ['Order', receipt.order],
+                ['Payment method', receipt.provider ? `${receipt.method} (${receipt.provider})` : receipt.method],
+                ['Reference', receipt.reference],
+                ['Cashier', receipt.cashier],
+              ] as [string, string][]
+            )
+              .filter(([, value]) => value)
+              .map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-muted">{label}</dt>
+                  <dd className="text-right font-semibold">{value}</dd>
+                </div>
+              ))}
+          </dl>
+          {receipt.lines.length > 0 && (
+            <ul className="space-y-1 border-b border-dashed border-line pb-2">
+              {receipt.lines.map((line, index) => (
+                <li key={index} className="flex justify-between gap-4">
+                  <span className="min-w-0 truncate">
+                    {line.quantity} × {line.description}
+                  </span>
+                  <span className="tabular-nums">{money(line.total)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <dl className="space-y-1">
+            {(
+              [
+                ['Subtotal', receipt.subtotal, false],
+                ['Discount', -receipt.discount, receipt.discount === 0],
+                ['Surcharge', receipt.surcharge, receipt.surcharge === 0],
+                ['Tax', receipt.tax, receipt.tax === 0],
+                ['Delivery', receipt.deliveryFee, receipt.deliveryFee === 0],
+                ['Order total', receipt.total, false],
+              ] as [string, number, boolean][]
+            )
+              .filter(([, , hidden]) => !hidden)
+              .map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-muted">{label}</dt>
+                  <dd className="tabular-nums">{money(value)}</dd>
+                </div>
+              ))}
+          </dl>
+          <div className="flex justify-between gap-4 border-t border-dashed border-line pt-2 text-sm font-bold">
+            <span>Paid</span>
+            <span className="tabular-nums">{money(receipt.amount)}</span>
+          </div>
+          {receipt.cashReceived !== null && (
+            <div className="flex justify-between gap-4">
+              <span className="text-muted">Cash received · change</span>
+              <span className="tabular-nums">
+                {money(receipt.cashReceived)} · {money(receipt.change ?? 0)}
+              </span>
+            </div>
+          )}
+          <div className="flex justify-between gap-4">
+            <span className="text-muted">Balance after this payment</span>
+            <span className="tabular-nums">{money(receipt.balanceAfter)}</span>
+          </div>
+          <p className="border-t border-dashed border-line pt-2 text-center text-sm font-bold tracking-widest uppercase">
+            {getTxnStatus(txn.status).label}
+          </p>
+        </div>
+      )}
     </Modal>
   )
 }

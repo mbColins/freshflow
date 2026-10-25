@@ -4,6 +4,8 @@ export type PayMethod =
   | 'Card'
   | 'Bank Transfer'
   | 'Account Credit'
+  // Orders paid before payments were recorded one by one
+  | 'Other'
 
 export type TxnStatus =
   | 'completed'
@@ -17,7 +19,10 @@ export type TxnStatus =
 export type RefundStatus = 'Pending Approval' | 'Completed' | 'Rejected'
 
 export type Transaction = {
+  // The payment's code, e.g. TXN-000123
   id: string
+  // What the API addresses the payment by
+  uuid: string
   receipt: string
   at: string
   orderId: string
@@ -79,6 +84,7 @@ export type PaymentException = {
 }
 
 export type CashSession = {
+  uuid: string
   cashier: string
   register: string
   openedAt: string
@@ -88,6 +94,8 @@ export type CashSession = {
   closedAt: string | null
   counted: number | null
   varianceReason: string
+  // The server's own figures for what the till should hold
+  totals: { cashPayments: number; cashRefunds: number; adjustments: number; expected: number }
 }
 
 export type AuditEntry = {

@@ -9,6 +9,7 @@ import {
   Trash2,
   UserPlus,
 } from 'lucide-react'
+import { ARTICLE_TYPES, articleLabel } from '../../constants/articleTypes'
 import {
   DELIVERY_FEE,
   EXPRESS_SURCHARGE_RATE,
@@ -16,6 +17,7 @@ import {
   PAYMENT_METHODS,
   TAX_RATE,
 } from '../../constants/orders'
+import useStaff from '../../hooks/useStaff'
 import type {
   Customer,
   FulfilmentMethod,
@@ -23,8 +25,9 @@ import type {
   PaymentMethod,
 } from '../../types/order'
 import { useGetBranchDropdownQuery } from '../../services/branchApi'
-import { useGetCustomerDropdownQuery } from '../../services/customerApi'
+import { useCreateCustomerMutation, useGetCustomerDropdownQuery } from '../../services/customerApi'
 import { useCreateOrderMutation } from '../../services/orderApi'
+import { useListPaymentProvidersQuery } from '../../services/paymentApi'
 import { saveFailureMessage } from '../../utils/apiErrors'
 import { toApiMethod, toApiPaymentMethod, toApiPriority } from '../../utils/orderMapping'
 import type { OrderRequest } from '../../utils/orderMapping'
@@ -44,11 +47,11 @@ import {
 import { toLocalInput } from '../../utils/dates'
 
 const STEPS = ['Customer', 'Services & Items', 'Options', 'Payment', 'Confirm']
-const ITEM_NAMES = Object.keys(ITEM_PRICES)
 
 export type AfterCreate = 'none' | 'print' | 'send'
 
-// `serviceId` is the service's uuid ('' until the services load)
+// `name` is an ArticleType constant (SHIRT); `serviceId` is the service's uuid
+// ('' until the services load)
 type Line = { key: number; name: string; qty: string; serviceId: string }
 
 const NO_SERVICES: ServiceOption[] = []
@@ -90,7 +93,7 @@ function NewOrderDialog({
   const [newEmail, setNewEmail] = useState('')
 
   const [lines, setLines] = useState<Line[]>([
-    { key: 0, name: ITEM_NAMES[0], qty: '1', serviceId: '' },
+    { key: 0, name: ARTICLE_TYPES[0].id, qty: '1', serviceId: '' },
   ])
   const [nextLineKey, setNextLineKey] = useState(1)
 
@@ -108,7 +111,7 @@ function NewOrderDialog({
   function getUnitPrice(line: Line) {
     const service = serviceFor(line)
     if (!service) return 0
-    if (service.pricingModel === 'custom' && service.basePrice <= 0) return ITEM_PRICES[line.name] ?? 0
+    if (service.pricingModel === 'custom' && service.basePrice <= 0) return ITEM_PRICES[articleLabel(line.name)] ?? 0
     return service.basePrice
   }
   const priceUnit = (line: Line) => PRICE_UNITS[serviceFor(line)?.pricingModel ?? ''] ?? 'item'
@@ -130,11 +133,22 @@ function NewOrderDialog({
   const branchId = chosenBranch || branches[0]?.uuid || ''
 
   const [createOrder, { isLoading: creating }] = useCreateOrderMutation()
+  const [createCustomer, { isLoading: creatingCustomer }] = useCreateCustomerMutation()
+  const staff = useStaff()
+  const [assignee, setAssignee] = useState('')
+  const [provider, setProvider] = useState('')
+  const [reference, setReference] = useState('')
+  const [cashReceived, setCashReceived] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
 
   const [discount, setDiscount] = useState('')
   const [payMethod, setPayMethod] = useState<PaymentMethod>('Cash')
   const [amountPaid, setAmountPaid] = useState('')
+  // Digital methods name the provider that took the money
+  const providerList = useListPaymentProvidersQuery(branchId || undefined, { skip: !branchId })
+  const providers = (providerList.data ?? []).filter(
+    (item) => item.enabled && item.method === payMethod,
+  )
 
   // Customers come from GET /customer/dropdown, searched on the server as the
   // user types (after a short pause)
@@ -177,7 +191,9 @@ function NewOrderDialog({
       : selectedCustomer !== null,
     lines.length > 0 && lines.every((line) => Number(line.qty) >= 1 && serviceFor(line) !== undefined),
     branchId !== '' && dueAt !== '' && (method === 'pickup' || address.trim() !== ''),
-    paid >= 0 && paid <= total,
+    paid >= 0 &&
+      paid <= total &&
+      (paid === 0 || payMethod === 'Cash' || (provider !== '' && reference.trim() !== '')),
     true,
   ][step]
 
@@ -186,53 +202,80 @@ function NewOrderDialog({
   }
 
   function addLine(serviceId = firstService ?? '') {
-    setLines([...lines, { key: nextLineKey, name: ITEM_NAMES[0], qty: '1', serviceId }])
+    setLines([...lines, { key: nextLineKey, name: ARTICLE_TYPES[0].id, qty: '1', serviceId }])
     setNextLineKey(nextLineKey + 1)
   }
 
   // The totals shown here are an estimate: the backend prices the order from
   // its own price lists and sends the final figures back
   async function handleCreate(after: AfterCreate) {
-    const [firstname = '', ...rest] = newName.trim().split(/\s+/)
-    const request: OrderRequest = {
-      branchId,
-      customerId: isNewCustomer ? null : (selectedCustomer?.uuid ?? null),
-      newCustomer: isNewCustomer
-        ? { firstname, lastname: rest.join(' '), phoneNumber: newPhone.trim(), email: newEmail.trim() }
-        : null,
-      items: lines.map((line) => {
-        const perKg = serviceFor(line)?.pricingModel === 'kg'
-        return {
-          serviceId: serviceIdOf(line),
-          itemType: line.name,
-          quantity: perKg ? 1 : Number(line.qty),
-          weightKg: perKg ? Number(line.qty) : null,
-          condition: 'NORMAL',
-          notes: '',
-        }
-      }),
-      priority: toApiPriority(express ? 'express' : 'normal'),
-      fulfilmentMethod: toApiMethod(method),
-      deliveryAddress: method === 'delivery' ? address.trim() : null,
-      dueAt: new Date(dueAt).toISOString(),
-      discount: discountValue,
-      customerNotes: customerNotes.trim(),
-      handlingInstructions: handling.trim(),
-      // TODO: let the user pick who handles the order once staff come from the API
-      assignedToId: null,
-      initialPayment:
-        paid > 0 ? { amount: paid, method: toApiPaymentMethod(payMethod), reference: '' } : null,
-    }
     setCreateError(null)
     try {
+      // A new customer is stored first; the order then names them
+      let customerId = isNewCustomer ? null : (selectedCustomer?.uuid ?? null)
+      if (isNewCustomer) {
+        const [firstname = '', ...rest] = newName.trim().split(/\s+/)
+        customerId = await createCustomer({
+          firstname,
+          lastname: rest.join(' '),
+          phoneNumber: newPhone.trim(),
+          email: newEmail.trim(),
+          homeAddress: '',
+          neighbourhood: '',
+          loyaltyPoints: 0,
+          branchId,
+          referralSource: '',
+        }).unwrap()
+        if (!customerId) throw new Error('The customer was created but the server didn’t say which one.')
+      }
+      if (!customerId) throw new Error('Choose a customer.')
+      const request: OrderRequest = {
+        customerId,
+        branchId,
+        priority: toApiPriority(express ? 'express' : 'normal'),
+        ...(assignee ? { assignedTo: assignee } : {}),
+        promisedDate: `${dueAt.slice(0, 16)}:00`,
+        deliveryOptions: toApiMethod(method),
+        ...(method === 'delivery' ? { deliveryAddress: address.trim() } : {}),
+        deliveryFee,
+        discountAmount: discountValue,
+        surchargeAmount: surcharge,
+        taxAmount: tax,
+        customerNotes: customerNotes.trim(),
+        handlingInstructions: handling.trim(),
+        articleLines: lines.map((line) => {
+          const perKg = serviceFor(line)?.pricingModel === 'kg'
+          return {
+            articleType: line.name,
+            service: serviceIdOf(line),
+            quantity: perKg ? 1 : Number(line.qty),
+            weightKg: perKg ? Number(line.qty) : null,
+            unitPrice: getUnitPrice(line),
+            condition: 'NORMAL',
+          }
+        }),
+        ...(paid > 0
+          ? {
+              initialPayment: {
+                amount: paid,
+                method: toApiPaymentMethod(payMethod),
+                ...(payMethod === 'Cash'
+                  ? { ...(cashReceived ? { cashReceived: Number(cashReceived) } : {}) }
+                  : { provider, reference: reference.trim() }),
+              },
+            }
+          : {}),
+      }
       onCreated(await createOrder(request).unwrap(), after)
     } catch (error) {
       setCreateError(
-        saveFailureMessage(
-          error,
-          'The order wasn’t created.',
-          'A customer with this phone number already exists. Pick them from the list instead.',
-        ),
+        error instanceof Error && !('status' in error)
+          ? error.message
+          : saveFailureMessage(
+              error,
+              'The order wasn’t created.',
+              'A customer with this phone number already exists. Pick them from the list instead.',
+            ),
       )
     }
   }
@@ -281,7 +324,7 @@ function NewOrderDialog({
             <>
               <button
                 type="button"
-                disabled={creating}
+                disabled={creating || creatingCustomer}
                 onClick={() => void handleCreate('send')}
                 className={secondaryButton}
               >
@@ -290,7 +333,7 @@ function NewOrderDialog({
               </button>
               <button
                 type="button"
-                disabled={creating}
+                disabled={creating || creatingCustomer}
                 onClick={() => void handleCreate('print')}
                 className={secondaryButton}
               >
@@ -299,12 +342,12 @@ function NewOrderDialog({
               </button>
               <button
                 type="button"
-                disabled={creating}
+                disabled={creating || creatingCustomer}
                 onClick={() => void handleCreate('none')}
                 className={primaryButton}
               >
                 <Check className="size-4" aria-hidden="true" />
-                {creating ? 'Creating…' : 'Create Order'}
+                {creating || creatingCustomer ? 'Creating…' : 'Create Order'}
               </button>
             </>
           )}
@@ -511,8 +554,10 @@ function NewOrderDialog({
                     }
                     className={`${fieldClass} bg-white`}
                   >
-                    {ITEM_NAMES.map((name) => (
-                      <option key={name}>{name}</option>
+                    {ARTICLE_TYPES.map(({ id, label }) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -569,7 +614,7 @@ function NewOrderDialog({
                     setLines(lines.filter(({ key }) => key !== line.key))
                   }
                   disabled={lines.length === 1}
-                  aria-label={`Remove ${line.name}`}
+                  aria-label={`Remove ${articleLabel(line.name)}`}
                   className={`${iconButton} disabled:opacity-40`}
                 >
                   <Trash2 className="size-4" aria-hidden="true" />
@@ -630,6 +675,24 @@ function NewOrderDialog({
                 </button>
               </p>
             )}
+          </div>
+          <div className="sm:col-span-2">
+            <label htmlFor="order-assignee" className={labelClass}>
+              Assign to (optional)
+            </label>
+            <select
+              id="order-assignee"
+              value={assignee}
+              onChange={(event) => setAssignee(event.target.value)}
+              className={fieldClass}
+            >
+              <option value="">Nobody yet</option>
+              {staff.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
           </div>
           <label className="flex cursor-pointer items-center gap-2.5 rounded-lg bg-field p-3 text-xs font-semibold text-ink sm:col-span-2">
             <input
@@ -748,6 +811,60 @@ function NewOrderDialog({
                 ))}
               </select>
             </div>
+            {paid > 0 && payMethod !== 'Cash' && (
+              <>
+                <div>
+                  <label htmlFor="order-provider" className={labelClass}>
+                    Provider
+                  </label>
+                  <select
+                    id="order-provider"
+                    value={provider}
+                    onChange={(event) => setProvider(event.target.value)}
+                    className={fieldClass}
+                  >
+                    <option value="">Choose a provider…</option>
+                    {providers.map(({ provider: name }) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                  </select>
+                  {providers.length === 0 && (
+                    <p className="mt-1 text-[11px] text-danger">
+                      No {payMethod.toLowerCase()} provider is enabled for this branch.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="order-reference" className={labelClass}>
+                    Transaction / reference number
+                  </label>
+                  <input
+                    id="order-reference"
+                    autoComplete="off"
+                    value={reference}
+                    onChange={(event) => setReference(event.target.value)}
+                    className={`${fieldClass} font-mono`}
+                  />
+                </div>
+              </>
+            )}
+            {paid > 0 && payMethod === 'Cash' && (
+              <div>
+                <label htmlFor="order-cash-received" className={labelClass}>
+                  Cash handed over (optional, for the change)
+                </label>
+                <input
+                  id="order-cash-received"
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={cashReceived}
+                  onChange={(event) => setCashReceived(event.target.value)}
+                  className={fieldClass}
+                />
+                <p className="mt-1 text-[11px] text-muted">Cash can only be taken while a cash register is open.</p>
+              </div>
+            )}
             <div>
               <label htmlFor="order-paid" className={labelClass}>
                 Amount received now (XAF)
@@ -826,7 +943,7 @@ function NewOrderDialog({
               {lines.map((line) => (
                 <li key={line.key} className="flex justify-between gap-4">
                   <span>
-                    {line.name} × {line.qty}
+                    {articleLabel(line.name)} × {line.qty}
                     <span className="text-muted"> · {serviceFor(line)?.name}</span>
                   </span>
                   <span className="tabular-nums">

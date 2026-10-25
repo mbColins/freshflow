@@ -338,6 +338,7 @@ export function emptyProfile(id: string, branchId: string): MachineProfile {
   const meta = getMachineType('Washing Machine')
   return {
     id,
+    uuid: '',
     name: '',
     type: 'Washing Machine',
     manufacturer: '',
@@ -356,8 +357,8 @@ export function emptyProfile(id: string, branchId: string): MachineProfile {
 }
 
 export function toProfile(machine: Machine): MachineProfile {
-  const { id, name, type, manufacturer, model, serial, yearPurchased, description, branchId, area, zone, specs, capabilities, purchaseCost, maintenanceEveryDays } = machine
-  return { id, name, type, manufacturer, model, serial, yearPurchased, description, branchId, area, zone, specs, capabilities, purchaseCost, maintenanceEveryDays }
+  const { id, uuid, name, type, manufacturer, model, serial, yearPurchased, description, branchId, area, zone, specs, capabilities, purchaseCost, maintenanceEveryDays } = machine
+  return { id, uuid, name, type, manufacturer, model, serial, yearPurchased, description, branchId, area, zone, specs, capabilities, purchaseCost, maintenanceEveryDays }
 }
 
 export function createMachine(profile: MachineProfile, by: string, now: number): Machine {

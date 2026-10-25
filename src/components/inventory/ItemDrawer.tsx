@@ -56,7 +56,7 @@ function ItemDrawer({ item, movements, now, permissions, onClose, onStock }: Ite
         item && (
           <span className="flex flex-wrap items-center gap-2">
             <StockStatusBadge item={item} now={now} />
-            <span className="font-mono">{item.id}</span>
+            {item.branchName && <span>{item.branchName}</span>}
             <span>{item.category}</span>
           </span>
         )

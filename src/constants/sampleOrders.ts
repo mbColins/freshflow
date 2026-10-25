@@ -158,6 +158,7 @@ function buildOrder(seed: Seed): Order {
     branch: seed.branch ?? BRANCHES[0],
     createdBy: 'Aisha Tamba',
     assignedTo: seed.assignedTo,
+    assignedToId: '',
     method,
     address: method === 'delivery' ? 'Rue Joss, Bonanjo, Douala' : undefined,
     driver: method === 'delivery' ? 'Carlos Mendez' : undefined,
@@ -179,6 +180,8 @@ function buildOrder(seed: Seed): Order {
     customerNotes: seed.customerNotes ?? '',
     staffNotes: '',
     handling: seed.handling ?? '',
+    cancelReason: '',
+    refundDue: 0,
     qc: {
       checks: Object.fromEntries(QC_CHECKS.map((check) => [check, qcDone])),
       result: qcDone ? 'passed' : 'pending',

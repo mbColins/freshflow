@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { StageId } from '../constants/pipeline'
+import { USER_TYPES } from '../constants/users'
+import useCurrentUser from '../hooks/useCurrentUser'
+import { useGetBranchDropdownQuery } from '../services/branchApi'
 import EquipmentTelemetry from '../components/dashboard/EquipmentTelemetry'
 import EventStream from '../components/dashboard/EventStream'
 import InsightsCard from '../components/dashboard/InsightsCard'
@@ -16,9 +19,9 @@ import SupplyStock from '../components/dashboard/SupplyStock'
 import {
   DashboardViewContext,
   ROLE_SECTIONS,
+  roleForUserType,
 } from '../components/dashboard/dashboardState'
 import type {
-  Role,
   SectionId,
   ViewState,
 } from '../components/dashboard/dashboardState'
@@ -28,7 +31,15 @@ const REFRESH_MS = 800
 const rowClass = 'grid gap-4 lg:auto-cols-fr lg:grid-flow-col'
 
 function DashboardPage() {
-  const [role, setRole] = useState<Role>('manager')
+  const { user, isPlatformAdmin } = useCurrentUser()
+  // A tenant owner (or platform admin) can narrow the dashboard to one branch;
+  // everyone else only ever sees their own branch
+  const seesAllBranches = user?.userType === 'TENANT' || isPlatformAdmin
+  const { data: branchOptions } = useGetBranchDropdownQuery(undefined, { skip: !seesAllBranches })
+  const [branch, setBranch] = useState('')
+  // The connected user's type decides which sections show
+  const role = roleForUserType(user?.userType)
+  const userTypeLabel = user?.userType ? USER_TYPES[user.userType] : ''
   const [viewState, setViewState] = useState<ViewState>('normal')
   const [refreshing, setRefreshing] = useState(false)
   const [stageFilter, setStageFilter] = useState<StageId | null>(null)
@@ -53,8 +64,10 @@ function DashboardPage() {
           <h1 className="sr-only">Dashboard</h1>
 
           <QuickActions
-            role={role}
-            onRoleChange={setRole}
+            userTypeLabel={userTypeLabel}
+            branches={seesAllBranches ? (branchOptions ?? []).map(({ uuid, name }) => ({ id: uuid, name })) : undefined}
+            branch={branch}
+            onBranchChange={setBranch}
             viewState={viewState}
             onViewStateChange={setViewState}
             refreshing={refreshing}
@@ -72,8 +85,8 @@ function DashboardPage() {
 
               {shows('revenue') && (
                 <div className="grid gap-4 lg:grid-cols-3">
-                  <RevenueChart />
-                  <OrderDistribution />
+                  <RevenueChart branch={branch} />
+                  <OrderDistribution branch={branch} />
                 </div>
               )}
 
@@ -91,6 +104,7 @@ function DashboardPage() {
 
               {shows('orders') && (
                 <OrdersTable
+                  branch={branch}
                   stageFilter={stageFilter}
                   onStageFilterChange={setStageFilter}
                 />
@@ -98,7 +112,7 @@ function DashboardPage() {
 
               {(shows('equipment') || shows('supplies') || shows('staff')) && (
                 <div className={rowClass}>
-                  {shows('equipment') && <EquipmentTelemetry />}
+                  {shows('equipment') && <EquipmentTelemetry branch={branch} />}
                   {shows('supplies') && <SupplyStock />}
                   {shows('staff') && <StaffMetrics />}
                 </div>

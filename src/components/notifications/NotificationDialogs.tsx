@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Plus, Send, Trash2, TriangleAlert } from 'lucide-react'
 import {
-  AUDIENCES,
+  COMPOSE_AUDIENCES,
   CATEGORIES,
   CHANNELS,
   RULE_FIELDS,
@@ -19,7 +19,6 @@ import type {
 import {
   describeRule,
   formatStamp,
-  getRecipientCount,
   getUnknownVariables,
   renderTemplate,
 } from '../../utils/notifications'
@@ -100,10 +99,9 @@ export function ComposeDialog({
 }) {
   const [step, setStep] = useState(0)
   const [later, setLater] = useState(false)
-  const [input, setInput] = useState<ComposeInput>({ audience: AUDIENCES[0].value, channels: ['In-App'], title: '', message: '', branchId: '', scheduledFor: '' })
+  const [input, setInput] = useState<ComposeInput>({ audience: COMPOSE_AUDIENCES[0].value, channels: ['In-App'], title: '', message: '', branchId: '', scheduledFor: '' })
   const patch = (change: Partial<ComposeInput>) => setInput({ ...input, ...change })
   const last = COMPOSE_STEPS.length - 1
-  const recipients = getRecipientCount(input.audience)
   const problems = [
     ...(input.channels.length === 0 ? ['Choose at least one channel (Channel).'] : []),
     ...(!input.title.trim() ? ['Add a title (Message).'] : []),
@@ -160,7 +158,7 @@ export function ComposeDialog({
       {step === 0 && (
         <div className="space-y-3">
           <div role="radiogroup" aria-label="Audience" className="grid gap-2 sm:grid-cols-2">
-            {AUDIENCES.map(({ value, kind, recipients: count }) => {
+            {COMPOSE_AUDIENCES.map(({ value, label, kind, help }) => {
               const selected = input.audience === value
               return (
                 <button
@@ -174,10 +172,9 @@ export function ComposeDialog({
                   }`}
                 >
                   <span>
-                    <span className="block font-bold text-ink">{value}</span>
-                    <span className="text-[11px] text-muted">{kind === 'customer' ? 'Customers' : 'Employees'}</span>
+                    <span className="block font-bold text-ink">{label}</span>
+                    <span className="text-[11px] text-muted">{kind === 'customer' ? 'Customers' : 'Employees'} · {help}</span>
                   </span>
-                  <span className="font-semibold text-muted tabular-nums">{count.toLocaleString('en-US')}</span>
                 </button>
               )
             })}
@@ -190,7 +187,7 @@ export function ComposeDialog({
               ))}
             </select>
           </FormField>
-          <p className="text-[11px] text-muted">Recipient numbers are estimates for the whole business and don’t change with the branch yet.</p>
+          <p className="text-[11px] text-muted">A manager always sends within their own branch. Platform admins must pick one.</p>
         </div>
       )}
 
@@ -255,8 +252,7 @@ export function ComposeDialog({
           <dl className="divide-y divide-line rounded-lg bg-field px-3 text-xs">
             {(
               [
-                ['Audience', `${input.audience}${input.branchId ? ` · ${branches.find(({ id }) => id === input.branchId)?.name}` : ''}`],
-                ['Recipients', `About ${recipients.toLocaleString('en-US')}`],
+                ['Audience', `${COMPOSE_AUDIENCES.find(({ value }) => value === input.audience)?.label ?? input.audience}${input.branchId ? ` · ${branches.find(({ id }) => id === input.branchId)?.name}` : ''}`],
                 ['Channels', input.channels.join(' + ') || 'None'],
                 ['Delivery', later ? (input.scheduledFor ? `Scheduled for ${formatStamp(new Date(input.scheduledFor).toISOString())}` : 'Scheduled (no time set)') : 'Immediately'],
               ] as const

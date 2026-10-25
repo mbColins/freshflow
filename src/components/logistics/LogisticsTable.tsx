@@ -23,7 +23,7 @@ import type {
   LogisticsFilters,
 } from '../../types/logistics'
 import { formatXaf } from '../../utils/orders'
-import { formatClock, isClosed } from '../../utils/logistics'
+import { formatClock, isClosed, jobRef } from '../../utils/logistics'
 import { fieldClass, iconButton, secondaryButton } from '../orders/styles'
 import Badge from '../ui/Badge'
 import Menu, { MenuItem } from '../ui/Menu'
@@ -51,7 +51,8 @@ type LogisticsTableProps = {
   onClearSelection: () => void
   onOpenJob: (id: string) => void
   onAssign: (jobIds: string[]) => void
-  onSetPriority: (jobIds: string[], priority: JobPriority) => void
+  // Left out while the API can't change a job's priority
+  onSetPriority?: (jobIds: string[], priority: JobPriority) => void
   onCancel: (jobIds: string[]) => void
   onExport: (jobs: DispatchJob[]) => void
 }
@@ -208,30 +209,32 @@ function LogisticsTable({
             <UserCog className="size-3.5" aria-hidden="true" />
             Assign Driver
           </button>
-          <Menu
-            align="left"
-            trigger={
-              <>
-                Change Priority
-                <ChevronDown className="size-3.5" aria-hidden="true" />
-              </>
-            }
-            triggerClassName={bulkActionClass}
-          >
-            {(close) =>
-              PRIORITIES.map(({ id, label }) => (
-                <MenuItem
-                  key={id}
-                  onSelect={() => {
-                    close()
-                    onSetPriority(selected.map((job) => job.id), id)
-                  }}
-                >
-                  {label}
-                </MenuItem>
-              ))
-            }
-          </Menu>
+          {onSetPriority && (
+            <Menu
+              align="left"
+              trigger={
+                <>
+                  Change Priority
+                  <ChevronDown className="size-3.5" aria-hidden="true" />
+                </>
+              }
+              triggerClassName={bulkActionClass}
+            >
+              {(close) =>
+                PRIORITIES.map(({ id, label }) => (
+                  <MenuItem
+                    key={id}
+                    onSelect={() => {
+                      close()
+                      onSetPriority(selected.map((job) => job.id), id)
+                    }}
+                  >
+                    {label}
+                  </MenuItem>
+                ))
+              }
+            </Menu>
+          )}
           <button type="button" onClick={() => onExport(selected)} className={bulkActionClass}>
             <Download className="size-3.5" aria-hidden="true" />
             Export
@@ -307,7 +310,7 @@ function LogisticsTable({
                       <td className={cellClass}>
                         <input
                           type="checkbox"
-                          aria-label={`Select ${job.id}`}
+                          aria-label={`Select ${jobRef(job)}`}
                           checked={checked}
                           onChange={() => onToggle(job.id)}
                           className="size-4 accent-brand"
@@ -322,7 +325,7 @@ function LogisticsTable({
                               onClick={() => onOpenJob(job.id)}
                               className="rounded-sm font-bold whitespace-nowrap text-brand hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
                             >
-                              {job.id}
+                              {jobRef(job)}
                             </button>
                             <span className="block font-mono text-[10px] text-muted">
                               {job.orderId}
@@ -382,7 +385,7 @@ function LogisticsTable({
                       </td>
                       <td className={`${cellClass} sticky right-0 bg-white`}>
                         <Menu
-                          label={`Actions for ${job.id}`}
+                          label={`Actions for ${jobRef(job)}`}
                           trigger={<Ellipsis className="size-4" aria-hidden="true" />}
                           triggerClassName={iconButton}
                         >
@@ -442,7 +445,7 @@ function LogisticsTable({
                   >
                     <JobTypeIcon job={job} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-bold text-brand">{job.id}</span>
+                      <span className="block text-sm font-bold text-brand">{jobRef(job)}</span>
                       <span className="block truncate text-xs font-semibold text-ink">
                         {job.customer}
                       </span>

@@ -22,7 +22,6 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import {
   CHANNELS,
-  CHANNEL_STATS,
   PRIORITIES,
   TABS,
 } from '../../constants/notifications'
@@ -42,6 +41,7 @@ import {
   matchesTab,
   needsAttention,
 } from '../../utils/notifications'
+import useChannelStats from '../../hooks/useChannelStats'
 import { fieldClass, iconButton, primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Badge from '../ui/Badge'
 import type { BadgeTone } from '../ui/Badge'
@@ -109,7 +109,7 @@ export function NotificationKpis({
   onTab: (tab: NotificationTab) => void
 }) {
   const count = (tab: NotificationTab) => notifications.filter((item) => matchesTab(item, tab)).length
-  const delivery = getDeliveryRate()
+  const delivery = getDeliveryRate(useChannelStats().stats)
   const cards: { label: string; icon: LucideIcon; value: string; note: string; tone: string; tab?: NotificationTab }[] = [
     { label: 'Total', icon: Inbox, value: String(notifications.length), note: 'In the inbox', tone: 'text-brand', tab: 'all' },
     { label: 'Unread', icon: BellRing, value: String(count('unread')), note: 'Not opened yet', tone: 'text-brand', tab: 'unread' },
@@ -161,8 +161,16 @@ export function NotificationKpis({
 const CHANNEL_TONES: Record<string, BadgeTone> = { Operational: 'success', Degraded: 'warning', Down: 'danger' }
 
 export function ChannelHealth() {
-  const { sent, delivered, failed, rate } = getDeliveryRate()
-  const issues = CHANNEL_STATS.filter(({ status }) => status !== 'Operational')
+  const { stats: channelStats, isLoading } = useChannelStats()
+  const { sent, delivered, failed, rate } = getDeliveryRate(channelStats)
+  const issues = channelStats.filter(({ status }) => status !== 'Operational')
+  if (isLoading) {
+    return (
+      <Panel title="Notification System Health" subtitle="Loading the last 30 days…">
+        <div className="h-24 animate-pulse rounded-md bg-field" aria-busy="true" />
+      </Panel>
+    )
+  }
   return (
     <Panel
       title="Notification System Health"
@@ -176,7 +184,7 @@ export function ChannelHealth() {
         </div>
       </div>
       <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        {CHANNEL_STATS.map((stats) => (
+        {channelStats.map((stats) => (
           <li key={stats.channel} className="min-w-0 rounded-lg bg-field p-3">
             <p className="flex items-center justify-between gap-2">
               <span className="text-xs font-bold text-ink">{stats.channel}</span>
@@ -186,9 +194,9 @@ export function ChannelHealth() {
               {(
                 [
                   ['Sent', stats.sent.toLocaleString('en-US')],
-                  ['Delivered', `${((stats.delivered / stats.sent) * 100).toFixed(1)}%`],
+                  ['Delivered', stats.sent === 0 ? '—' : `${((stats.delivered / stats.sent) * 100).toFixed(1)}%`],
                   ['Failed', String(stats.failed)],
-                  [stats.channel === 'SMS' ? 'Read' : 'Opened / read', stats.read === null ? 'Not reported' : `${Math.round((stats.read / stats.delivered) * 100)}%`],
+                  [stats.channel === 'SMS' ? 'Read' : 'Opened / read', stats.read === null || stats.delivered === 0 ? 'Not reported' : `${Math.round((stats.read / stats.delivered) * 100)}%`],
                   ['Average time', `${stats.avgSeconds} s`],
                 ] as const
               ).map(([label, value]) => (

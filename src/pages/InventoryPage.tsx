@@ -37,26 +37,26 @@ import InventoryTable from '../components/inventory/InventoryTable'
 import type { StockAction } from '../components/inventory/InventoryTable'
 import ItemDrawer from '../components/inventory/ItemDrawer'
 import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
-import {
-  EMPTY_INVENTORY_FILTERS,
-  INVENTORY_PERMISSIONS,
-} from '../constants/inventory'
-import { BRANCHES, CURRENT_USER, ORDER_ROLES, STAFF_PERSPECTIVE_USER } from '../constants/orders'
-import {
-  SAMPLE_ITEMS,
-  SAMPLE_MOVEMENTS,
-  SAMPLE_PURCHASE_ORDERS,
-  SAMPLE_TRANSFERS,
-} from '../constants/sampleInventory'
-import useLocalStorage from '../hooks/useLocalStorage'
+import { EMPTY_INVENTORY_FILTERS } from '../constants/inventory'
+import type { InventoryPermissions } from '../constants/inventory'
+import useCurrentUser from '../hooks/useCurrentUser'
 import useNow from '../hooks/useNow'
+import { useGetBranchDropdownQuery } from '../services/branchApi'
+import {
+  useCreateInventoryItemMutation,
+  useListInventoryItemsQuery,
+  useListStockMovementsQuery,
+  useRecordStockMovementMutation,
+  useUpdateInventoryItemMutation,
+} from '../services/inventoryApi'
+import type { StockMovementRequest } from '../services/inventoryApi'
 import type {
   InventoryFilters,
   InventoryItem,
-  Movement,
-  MovementType,
+  PurchaseOrder,
+  StockTransfer,
 } from '../types/inventory'
-import type { OrderRole } from '../types/order'
+import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../utils/apiErrors'
 import {
   formatQty,
   getStockStatus,
@@ -66,6 +66,29 @@ import {
 import { downloadFile } from '../utils/orders'
 
 const TOAST_MS = 4000
+// TODO: page through the list if a tenant ever stocks more than this
+const ALL_ITEMS = { page: 0, size: 500 }
+const RECENT_MOVEMENTS = { page: 0, size: 200 }
+const NO_ITEMS: InventoryItem[] = []
+
+const failure = (error: unknown, rejected: string) =>
+  serverMessage(error) ?? errorMessage(error as Parameters<typeof errorMessage>[0], rejected) ?? NETWORK_ERROR_MESSAGE
+
+// The API's movement for what the stock dialog asked for. `quantity` is the
+// amount moved, or the counted level for an adjustment
+function toMovementRequest(change: StockChange, quantity: number): StockMovementRequest {
+  switch (change.type) {
+    case 'Stock received':
+      return { type: 'RECEIPT', quantity, unitCost: change.unitCost, reference: change.reference }
+    case 'Consumption':
+      return { type: 'USAGE', quantity, reference: change.reference }
+    case 'Adjustment':
+      return { type: 'ADJUSTMENT', quantity, reference: change.reference, note: change.reference }
+    default:
+      // Damage, expiry and loss are all waste to the server
+      return { type: 'WASTE', quantity, reference: change.reference, note: `${change.type}: ${change.reference}` }
+  }
+}
 
 type DialogState =
   | { name: 'stock'; action: StockAction; itemId: string }
@@ -78,21 +101,34 @@ const STATUS_ORDER = ['out', 'expired', 'critical', 'low', 'expiring', 'overstoc
 
 function InventoryPage() {
   const now = useNow()
-  // TODO: replace these in-memory lists with the inventory API
-  const [items, setItems] = useState(SAMPLE_ITEMS)
-  const [movements, setMovements] = useState(SAMPLE_MOVEMENTS)
-  const [orders, setOrders] = useState(SAMPLE_PURCHASE_ORDERS)
-  const [transfers, setTransfers] = useState(SAMPLE_TRANSFERS)
+  const { name: actor, can } = useCurrentUser()
+  const [branch, setBranch] = useState('')
+  const { data: branches = [] } = useGetBranchDropdownQuery()
+  const itemsQuery = useListInventoryItemsQuery({ ...ALL_ITEMS, ...(branch ? { branch } : {}) })
+  const movementsQuery = useListStockMovementsQuery({ ...RECENT_MOVEMENTS, ...(branch ? { branch } : {}) })
+  const items = itemsQuery.data ?? NO_ITEMS
+  const movements = movementsQuery.data ?? []
+  const [recordMovement] = useRecordStockMovementMutation()
+  const [updateItem] = useUpdateInventoryItemMutation()
+  const [createItem, { error: createError, reset: resetCreate }] = useCreateInventoryItemMutation()
+  // The server has no purchase orders or transfers yet, so these live only
+  // until the page is left. Receiving an order does record real stock
+  const [orders, setOrders] = useState<PurchaseOrder[]>([])
+  const [transfers, setTransfers] = useState<StockTransfer[]>([])
   const [filters, setFilters] = useState<InventoryFilters>(EMPTY_INVENTORY_FILTERS)
   const [openItemId, setOpenItemId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [role, setRole] = useLocalStorage<OrderRole>('inventory.role', 'manager')
   const searchRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLDivElement>(null)
 
-  const permissions = INVENTORY_PERMISSIONS[role]
-  const actor = role === 'staff' ? STAFF_PERSPECTIVE_USER : CURRENT_USER
+  // From the role's permissions; everything is allowed until the profile says otherwise
+  const manage = can('INVENTORY:MANAGE_ITEMS') || can('INVENTORY:ADD_STOCK')
+  const permissions: InventoryPermissions = {
+    costs: manage || can('INVENTORY:PURCHASE'),
+    consume: manage,
+    manage,
+  }
   const filtered = items
     .filter((item) => matchesInventoryFilters(item, filters, now))
     .sort(
@@ -130,70 +166,41 @@ function InventoryPage() {
     tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  // Applies signed stock changes and writes one movement-log entry per change
-  function moveStock(
-    changes: {
-      itemId: string
-      delta: number
-      type: MovementType
-      reference: string
-      patch?: Partial<InventoryItem>
-    }[],
-  ) {
-    const at = new Date().toISOString()
-    const entries: Movement[] = []
-    setItems(
-      items.map((item) => {
-        const change = changes.find(({ itemId }) => itemId === item.id)
-        if (!change) return item
-        const after = Math.max(0, Math.round((item.stock + change.delta) * 100) / 100)
-        entries.push({
-          at,
-          itemId: item.id,
-          type: change.type,
-          qty: after - item.stock,
-          before: item.stock,
-          after,
-          user: actor,
-          reference: change.reference,
-        })
-        return { ...item, ...change.patch, stock: after, lastMovementAt: at }
-      }),
-    )
-    setMovements([...entries, ...movements])
+  async function handleStockChange(change: StockChange) {
+    const item = items.find(({ id }) => id === change.itemId)
+    if (!item) return
+    const quantity = change.type === 'Adjustment' ? item.stock + change.delta : Math.abs(change.delta)
+    try {
+      await recordMovement({ itemId: item.id, movement: toMovementRequest(change, quantity) }).unwrap()
+      // Batch and expiry belong to the item, not to the movement
+      if (change.batch || change.expiresAt) {
+        await updateItem({
+          id: item.id,
+          changes: {
+            ...(change.batch ? { batch: change.batch } : {}),
+            ...(change.expiresAt ? { expiresAt: change.expiresAt.slice(0, 10) } : {}),
+          },
+        }).unwrap()
+      }
+      setDialog(null)
+      setToast(
+        `${item.name}: ${change.delta > 0 ? '+' : '−'}${formatQty(Math.abs(change.delta), item.unit)} (${change.type.toLowerCase()})`,
+      )
+    } catch (error) {
+      setToast(failure(error, 'Couldn’t record the stock change.'))
+    }
   }
 
-  function handleStockChange(change: StockChange) {
-    const item = items.find(({ id }) => id === change.itemId)!
-    moveStock([
-      {
-        itemId: change.itemId,
-        delta: change.delta,
-        type: change.type,
-        reference: change.reference,
-        patch: {
-          ...(change.unitCost !== undefined ? { unitCost: change.unitCost } : {}),
-          ...(change.batch ? { batch: change.batch } : {}),
-          ...(change.expiresAt
-            ? { expiresAt: new Date(change.expiresAt).toISOString() }
-            : {}),
-        },
-      },
-    ])
-    setDialog(null)
-    setToast(
-      `${item.name}: ${change.delta > 0 ? '+' : '−'}${formatQty(Math.abs(change.delta), item.unit)} (${change.type.toLowerCase()})`,
-    )
-  }
-
+  // Not stored yet: the record stays on this page and stock isn't moved
   function handleTransfer(input: TransferInput) {
-    const id = `TRF-0${22 + transfers.length - 2}`
+    const id = `TRF-${String(transfers.length + 1).padStart(4, '0')}`
+    const mine = items.find((item) => item.id === input.itemId)?.branchName ?? ''
     setTransfers([
       {
         id,
         itemId: input.itemId,
-        from: input.incoming ? input.otherBranch : BRANCHES[0],
-        to: input.incoming ? BRANCHES[0] : input.otherBranch,
+        from: input.incoming ? input.otherBranch : mine,
+        to: input.incoming ? mine : input.otherBranch,
         qty: input.qty,
         status: 'In Transit',
         requestedBy: actor,
@@ -201,27 +208,17 @@ function InventoryPage() {
       },
       ...transfers,
     ])
-    if (!input.incoming) {
-      moveStock([{ itemId: input.itemId, delta: -input.qty, type: 'Transfer', reference: id }])
-    }
     setDialog(null)
-    setToast(`Transfer ${id} created`)
+    setToast(`Transfer ${id} noted. Transfers aren’t stored or applied to stock yet.`)
   }
 
   function handleReceiveTransfer(id: string) {
-    const transfer = transfers.find((item) => item.id === id)!
-    setTransfers(
-      transfers.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)),
-    )
-    if (transfer.to === BRANCHES[0]) {
-      moveStock([{ itemId: transfer.itemId, delta: transfer.qty, type: 'Transfer', reference: id }])
-    }
-    setToast(`Transfer ${id} received`)
+    setTransfers(transfers.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)))
+    setToast(`Transfer ${id} marked received. Stock wasn’t changed.`)
   }
 
   function handleCreateOrder(input: PurchaseOrderInput) {
-    const number = Math.max(...orders.map(({ id }) => Number(id.replace(/\D/g, '')))) + 1
-    const id = `PO-${String(number).padStart(4, '0')}`
+    const id = `PO-${String(orders.length + 1).padStart(4, '0')}`
     setOrders([
       {
         id,
@@ -233,43 +230,50 @@ function InventoryPage() {
       ...orders,
     ])
     setDialog(null)
-    setToast(`${id} saved as a draft`)
+    setToast(`${id} saved as a draft on this page; purchase orders aren’t stored yet`)
   }
 
-  function handleReceiveOrder(id: string) {
-    const order = orders.find((item) => item.id === id)!
-    moveStock(
-      order.lines.map(({ itemId, qty, unitCost }) => ({
-        itemId,
-        delta: qty,
-        type: 'Stock received',
-        reference: id,
-        patch: { unitCost },
-      })),
-    )
-    setOrders(orders.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)))
-    setToast(`${id} received in full; stock updated`)
-  }
-
-  function handleCreateItem(item: InventoryItem) {
-    setItems([item, ...items])
-    if (item.stock > 0) {
-      setMovements([
-        {
-          at: new Date().toISOString(),
-          itemId: item.id,
-          type: 'Stock received',
-          qty: item.stock,
-          before: 0,
-          after: item.stock,
-          user: actor,
-          reference: 'Opening balance',
-        },
-        ...movements,
-      ])
+  async function handleReceiveOrder(id: string) {
+    const order = orders.find((item) => item.id === id)
+    if (!order) return
+    try {
+      for (const { itemId, qty, unitCost } of order.lines) {
+        await recordMovement({
+          itemId,
+          movement: { type: 'RECEIPT', quantity: qty, unitCost, reference: id },
+        }).unwrap()
+      }
+      setOrders(orders.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)))
+      setToast(`${id} received in full; stock updated`)
+    } catch (error) {
+      setToast(failure(error, `Couldn’t receive ${id}. Some lines may already be in stock.`))
     }
-    setDialog(null)
-    setToast(`${item.name} added as ${item.id}`)
+  }
+
+  async function handleCreateItem(item: InventoryItem) {
+    try {
+      await createItem({
+        name: item.name,
+        category: item.category,
+        description: item.description,
+        unit: item.unit,
+        location: item.location,
+        stock: item.stock,
+        reorder: item.reorder,
+        safety: item.safety,
+        max: item.max,
+        unitCost: item.unitCost,
+        supplier: item.supplier,
+        dailyUse: item.dailyUse,
+        batch: item.batch,
+        ...(item.expiresAt ? { expiresAt: item.expiresAt.slice(0, 10) } : {}),
+        branch: item.branchId,
+      }).unwrap()
+      setDialog(null)
+      setToast(`${item.name} added`)
+    } catch {
+      // The mutation's error is shown in the wizard
+    }
   }
 
   const openStock = (action: StockAction, itemId = '') =>
@@ -349,22 +353,46 @@ function InventoryPage() {
             )}
           </div>
         </div>
-        <label className="flex w-fit items-center gap-2 text-[11px] whitespace-nowrap text-muted">
-          Viewing as
-          <select
-            value={role}
-            onChange={(event) => setRole(event.target.value as OrderRole)}
-            className={`${fieldClass} h-8 w-auto!`}
-          >
-            {ORDER_ROLES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {branches.length > 1 && (
+          <label className="flex w-fit items-center gap-2 text-[11px] whitespace-nowrap text-muted">
+            Branch
+            <select
+              value={branch}
+              onChange={(event) => setBranch(event.target.value)}
+              className={`${fieldClass} h-8 w-auto!`}
+            >
+              <option value="">All branches</option>
+              {branches.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
+      {itemsQuery.isLoading ? (
+        <div className="animate-pulse space-y-4" aria-busy="true">
+          <p className="sr-only" role="status">Loading inventory…</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div key={index} className="h-[76px] rounded-xl bg-white ring-1 ring-line" />
+            ))}
+          </div>
+          <div className="h-64 rounded-xl bg-white ring-1 ring-line" />
+          <div className="h-96 rounded-xl bg-white ring-1 ring-line" />
+        </div>
+      ) : itemsQuery.isError && items.length === 0 ? (
+        <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">Couldn’t load the inventory</h2>
+          <p className="max-w-md text-xs text-muted">{failure(itemsQuery.error, 'The server refused the request.')}</p>
+          <button type="button" onClick={() => void itemsQuery.refetch()} disabled={itemsQuery.isFetching} className={`${secondaryButton} mt-2`}>
+            {itemsQuery.isFetching ? 'Retrying…' : 'Try Again'}
+          </button>
+        </div>
+      ) : (
+      <>
       <InventoryKpis
         items={items}
         now={now}
@@ -432,7 +460,7 @@ function InventoryPage() {
             canManage={permissions.manage}
             showCosts={permissions.costs}
             onCreate={() => setDialog({ name: 'po', itemIds: [] })}
-            onReceive={handleReceiveOrder}
+            onReceive={(id) => void handleReceiveOrder(id)}
             onAdvance={(id) =>
               setOrders(
                 orders.map((order) =>
@@ -464,6 +492,8 @@ function InventoryPage() {
       </div>
 
       <MovementsPanel movements={movements} items={items} />
+      </>
+      )}
 
       {permissions.manage && (
         <button
@@ -499,7 +529,7 @@ function InventoryPage() {
           items={items}
           initialItemId={dialog.itemId}
           onClose={() => setDialog(null)}
-          onSubmit={handleStockChange}
+          onSubmit={(change) => void handleStockChange(change)}
         />
       )}
       {dialog?.name === 'transfer' && (
@@ -522,8 +552,14 @@ function InventoryPage() {
       {dialog?.name === 'item' && (
         <ItemWizard
           existing={items}
-          onClose={() => setDialog(null)}
-          onCreate={handleCreateItem}
+          branches={branches}
+          defaultBranch={branch}
+          error={createError ? failure(createError, 'The server rejected this item.') : null}
+          onClose={() => {
+            resetCreate()
+            setDialog(null)
+          }}
+          onCreate={(item) => void handleCreateItem(item)}
         />
       )}
     </>

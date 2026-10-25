@@ -355,7 +355,7 @@ export function ReplenishmentQueue({
                       {status === 'out' ? 'Out of Stock' : severe ? 'Critical' : 'Low'}
                     </Badge>
                     {item.name}
-                    <span className="font-mono text-[10px] font-normal text-muted">{item.id}</span>
+                    <span className="text-[10px] font-normal text-muted">{item.branchName}</span>
                   </p>
                   <p className="mt-1 text-[11px] text-muted">
                     Available {formatQty(getAvailable(item), item.unit)} · reorder at{' '}

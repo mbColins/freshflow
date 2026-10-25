@@ -2,10 +2,13 @@ import { USER_TYPES } from '../constants/users'
 import { useGetMeQuery } from '../services/userApi'
 import type { AppUser } from '../types/user'
 
-// "Marcus Vance" -> "MV"; falls back to the username's first letters
+// From the username, else the email's local part: "marcus.vance" or
+// "marcus_vance@x.com" -> "MV", "admin" -> "AD"
 function initialsOf(user: AppUser) {
-  const fromName = [user.firstName, user.lastName].map((part) => part.trim()[0] ?? '').join('')
-  return (fromName || user.username.slice(0, 2)).toUpperCase()
+  const handle = user.username.trim() || user.email.trim().split('@')[0]
+  const words = handle.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  const letters = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? '').slice(0, 2)
+  return letters.toUpperCase() || '?'
 }
 
 // The signed-in user from GET /users/me, with what the layout shows.
@@ -13,8 +16,16 @@ function initialsOf(user: AppUser) {
 function useCurrentUser() {
   const { data: user, isLoading, isError } = useGetMeQuery()
   const name = user ? `${user.firstName} ${user.lastName}`.trim() || user.username : ''
+  const access = user?.access ?? null
   return {
     user,
+    // Null until the profile says what the user may do; a backend that
+    // doesn't send it leaves everything visible
+    access,
+    // Whether a menu (ORDERS) is open to the user
+    canOpen: (menu: string) => access === null || access.menus.includes(menu),
+    // Whether the user holds a permission code (PAYMENTS:REFUND)
+    can: (code: string) => access === null || access.platformAdmin || access.permissions.includes(code),
     isLoading,
     isError,
     name,

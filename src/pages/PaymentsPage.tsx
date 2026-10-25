@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { Lock, Plus, RotateCcw, ScanLine } from 'lucide-react'
 import { ConfirmDialog, ScanOrderDialog } from '../components/orders/OrderDialogs'
 import type { ConfirmRequest } from '../components/orders/OrderDialogs'
-import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
+import { primaryButton, secondaryButton } from '../components/orders/styles'
 import { MethodsDonut, OverviewChart } from '../components/payments/PaymentCharts'
 import {
   CashAdjustDialog,
   CloseSessionDialog,
+  OpenSessionDialog,
   RecordPaymentDialog,
   RefundDialog,
   ReminderDialog,
+  ResolveExceptionDialog,
   TxnReceiptDialog,
 } from '../components/payments/PaymentDialogs'
 import type { PaymentInput } from '../components/payments/PaymentDialogs'
@@ -27,32 +30,41 @@ import {
   RefundsPanel,
 } from '../components/payments/PaymentPanels'
 import PaymentsTable from '../components/payments/PaymentsTable'
-import { BRANCHES, CURRENT_USER, ORDER_ROLES } from '../constants/orders'
-import {
-  EMPTY_PAYMENT_FILTERS,
-  PAYMENT_PERMISSIONS,
-} from '../constants/payments'
-import {
-  SAMPLE_AUDIT,
-  SAMPLE_EXCEPTIONS,
-  SAMPLE_RECEIVABLES,
-  SAMPLE_REFUNDS,
-  SAMPLE_SESSION,
-  SAMPLE_TRANSACTIONS,
-} from '../constants/samplePayments'
-import useLocalStorage from '../hooks/useLocalStorage'
+import { EMPTY_PAYMENT_FILTERS } from '../constants/payments'
+import type { PaymentPermissions } from '../constants/payments'
+import useCurrentUser from '../hooks/useCurrentUser'
 import useNow from '../hooks/useNow'
-import type { OrderRole } from '../types/order'
+import { useListAuditQuery } from '../services/auditApi'
+import {
+  METHOD_TO_SERVER,
+  useAdjustCashSessionMutation,
+  useCloseCashSessionMutation,
+  useDecideRefundMutation,
+  useGetCurrentCashSessionQuery,
+  useGetPaymentSummaryQuery,
+  useListPaymentExceptionsQuery,
+  useListPaymentProvidersQuery,
+  useListPaymentsQuery,
+  useListReceivablesQuery,
+  useListRefundsQuery,
+  useOpenCashSessionMutation,
+  useReconcilePaymentsMutation,
+  useRecordPaymentMutation,
+  useRequestRefundMutation,
+  useSendPaymentReminderMutation,
+  useUpdatePaymentExceptionMutation,
+} from '../services/paymentApi'
 import type {
   AuditEntry,
   CashSession,
+  PaymentException,
   PaymentFilters,
   Refund,
   Transaction,
 } from '../types/payment'
+import { describeError } from '../utils/apiReasons'
 import { downloadFile, formatXaf } from '../utils/orders'
 import {
-  getCashSummary,
   getOutstanding,
   isCollected,
   isDigital,
@@ -60,45 +72,112 @@ import {
   transactionsToCsv,
 } from '../utils/payments'
 
-const TOAST_MS = 4000
-// Who the Receptionist / Cashier perspective acts as
-const CASHIER_USER = 'Jean Mbarga'
+const TOAST_MS = 5000
+// TODO: page through the lists if a tenant ever has more than this
+const RECENT = { page: 0, size: 200 }
+const RECENT_AUDIT = { entityType: 'PAYMENT' as const, page: 0, size: 30 }
+const NO_TRANSACTIONS: Transaction[] = []
+
+const describe = describeError
+
+const CHANNELS: Record<string, string> = { SMS: 'SMS', WhatsApp: 'WHATSAPP', Email: 'EMAIL' }
 
 type DialogState =
   | { name: 'record'; receivableId: string }
   | { name: 'refund'; txnId: string }
   | { name: 'remind'; receivableId: string }
-  | { name: 'adjust' | 'close' | 'scan' }
+  | { name: 'resolve'; exceptionId: string }
+  | { name: 'adjust' | 'close' | 'open' | 'scan' }
 
 function PaymentsPage() {
   const now = useNow()
-  // TODO: replace these in-memory lists with the payments API
-  const [transactions, setTransactions] = useState(SAMPLE_TRANSACTIONS)
-  const [receivables, setReceivables] = useState(SAMPLE_RECEIVABLES)
-  const [refunds, setRefunds] = useState(SAMPLE_REFUNDS)
-  const [exceptions, setExceptions] = useState(SAMPLE_EXCEPTIONS)
-  const [session, setSession] = useState<CashSession>(SAMPLE_SESSION)
-  const [audit, setAudit] = useState<AuditEntry[]>(SAMPLE_AUDIT)
+  const { can, name: actor } = useCurrentUser()
+  const permissions: PaymentPermissions = {
+    view: can('PAYMENTS:VIEW'),
+    record: can('PAYMENTS:RECORD'),
+    approve: can('PAYMENTS:APPROVE_REFUND'),
+    reconcile: can('PAYMENTS:RECONCILE'),
+  }
+
+  const paymentsQuery = useListPaymentsQuery(RECENT, { skip: !permissions.view })
+  const transactions = paymentsQuery.data?.items ?? NO_TRANSACTIONS
+  const { data: receivables = [] } = useListReceivablesQuery(RECENT, { skip: !permissions.view })
+  const { data: serverRefunds } = useListRefundsQuery(RECENT, { skip: !permissions.view })
+  const { data: serverExceptions } = useListPaymentExceptionsQuery(RECENT, { skip: !permissions.view })
+  const sessionQuery = useGetCurrentCashSessionQuery(undefined, { skip: !permissions.view })
+  const { data: providers = [], isLoading: providersLoading } = useListPaymentProvidersQuery(undefined, { skip: !permissions.view })
+  const { data: summary } = useGetPaymentSummaryQuery(undefined, { skip: !permissions.view })
+  const { data: auditPage } = useListAuditQuery(RECENT_AUDIT, { skip: !permissions.view })
+
+  const [recordPayment] = useRecordPaymentMutation()
+  const [reconcilePayments] = useReconcilePaymentsMutation()
+  const [requestRefund] = useRequestRefundMutation()
+  const [decideRefund] = useDecideRefundMutation()
+  const [updateException] = useUpdatePaymentExceptionMutation()
+  const [sendReminder] = useSendPaymentReminderMutation()
+  const [openSession] = useOpenCashSessionMutation()
+  const [adjustSession] = useAdjustCashSessionMutation()
+  const [closeSession] = useCloseCashSessionMutation()
+
+  // The session just counted, shown until the next one is opened
+  const [closedSession, setClosedSession] = useState<CashSession | null>(null)
+  const session = sessionQuery.data ?? closedSession
   const [filters, setFilters] = useState<PaymentFilters>(EMPTY_PAYMENT_FILTERS)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [openTxnId, setOpenTxnId] = useState<string | null>(null)
   const [receiptId, setReceiptId] = useState<string | null>(null)
-  const [dialog, setDialog] = useState<DialogState | null>(null)
+  const [dialogState, setDialogState] = useState<DialogState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [role, setRole] = useLocalStorage<OrderRole>('payments.role', 'manager')
   const searchRef = useRef<HTMLInputElement>(null)
+  // The Orders page links here with ?order=<number> to take a payment
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedOrder = searchParams.get('order')
+  const requestedReady = requestedOrder !== null && receivables.some(({ id }) => id === requestedOrder)
+  const dialog: DialogState | null =
+    dialogState ??
+    (requestedOrder && requestedReady && permissions.record ? { name: 'record', receivableId: requestedOrder } : null)
+  function setDialog(next: DialogState | null) {
+    setDialogState(next)
+    if (requestedOrder) setSearchParams({}, { replace: true })
+  }
   const tableRef = useRef<HTMLDivElement>(null)
   const receivablesRef = useRef<HTMLDivElement>(null)
 
-  const permissions = PAYMENT_PERMISSIONS[role]
-  const actor = role === 'receptionist' ? CASHIER_USER : CURRENT_USER
+  // Refunds and exceptions only carry a payment code; the customer and the
+  // amounts come from the payment itself when it is in the list
+  const refunds = useMemo<Refund[]>(
+    () =>
+      (serverRefunds ?? []).map((refund) => {
+        const payment = transactions.find(({ id }) => id === refund.txnId)
+        return { ...refund, customer: payment?.customer ?? '', original: payment?.amount ?? 0 }
+      }),
+    [serverRefunds, transactions],
+  )
+  const exceptions = useMemo<PaymentException[]>(
+    () =>
+      (serverExceptions ?? []).map((item) => {
+        const payment = transactions.find(({ id }) => id === item.txnId)
+        return { ...item, customer: payment?.customer ?? '', amount: payment?.amount ?? 0 }
+      }),
+    [serverExceptions, transactions],
+  )
+  const audit = useMemo<AuditEntry[]>(
+    () =>
+      (auditPage?.items ?? []).map((entry) => ({
+        at: entry.at,
+        user: entry.actor || 'System',
+        action: entry.action.toLowerCase().replace(/_/g, ' '),
+        to: entry.summary || undefined,
+      })),
+    [auditPage],
+  )
+
   const filtered = transactions.filter((txn) => matchesPaymentFilters(txn, filters))
   const filtersActive = Object.values(filters).some((value) => value !== '')
   const openTxn = transactions.find(({ id }) => id === openTxnId) ?? null
   const receiptTxn = transactions.find(({ id }) => id === receiptId)
   const cashiers = [...new Set(transactions.map(({ cashier }) => cashier))]
-  const cash = getCashSummary(session, transactions)
 
   useEffect(() => {
     if (!toast) return
@@ -122,13 +201,6 @@ function PaymentsPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  function log(action: string, to?: string, from?: string) {
-    setAudit((current) => [
-      { at: new Date().toISOString(), user: actor, action, to, from },
-      ...current,
-    ])
-  }
-
   function replaceFilters(next: PaymentFilters) {
     setFilters(next)
     setSelectedIds([])
@@ -139,155 +211,66 @@ function PaymentsPage() {
     tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  function updateTransactions(
-    ids: string[],
-    change: (txn: Transaction) => Transaction,
-    event?: string,
-  ) {
-    const at = new Date().toISOString()
-    setTransactions((current) =>
-      current.map((txn) => {
-        if (!ids.includes(txn.id)) return txn
-        const next = change(txn)
-        return event ? { ...next, timeline: [...next.timeline, { at, text: event }] } : next
-      }),
-    )
-  }
-
-  function handleRecord(input: PaymentInput): Transaction {
-    const receivable = receivables.find(({ id }) => id === input.receivableId)!
-    const at = new Date().toISOString()
-    const number =
-      Math.max(...transactions.map(({ id }) => Number(id.replace(/\D/g, '')))) + 1
-    const padded = String(number).padStart(6, '0')
-    const txn: Transaction = {
-      id: `TXN-${padded}`,
-      receipt: `REC-${padded}`,
-      at,
-      orderId: receivable.orderId,
-      customer: receivable.customer,
-      phone: receivable.phone,
-      branch: BRANCHES[0],
-      amount: input.amount,
-      fee: 0,
-      method: input.method,
-      provider: input.provider,
-      reference: input.reference || `CS-${padded}`,
-      status: 'completed',
-      cashier: actor,
-      refunded: 0,
-      // Digital payments wait for provider reconciliation
-      reconciled: !isDigital(input.method),
-      reviewReason: '',
-      failureReason: '',
-      timeline: [{ at, text: 'Payment recorded, receipt generated' }],
+  // Resolves with the payment so the dialog can show the receipt; a refusal
+  // is thrown as an Error the dialog shows
+  async function handleRecord(input: PaymentInput): Promise<Transaction> {
+    try {
+      const txn = await recordPayment({
+        order: input.receivableId,
+        amount: input.amount,
+        method: METHOD_TO_SERVER[input.method],
+        ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.reference ? { reference: input.reference } : {}),
+        ...(input.cashReceived !== undefined ? { cashReceived: input.cashReceived } : {}),
+      }).unwrap()
+      if (!txn) throw new Error('The server sent no payment back.')
+      return txn
+    } catch (error) {
+      throw new Error(describe(error, 'The payment wasn’t recorded.'), { cause: error })
     }
-    setTransactions([txn, ...transactions])
-    setReceivables(
-      receivables.map((item) =>
-        item.id === receivable.id ? { ...item, paid: item.paid + input.amount } : item,
-      ),
-    )
-    log(`Payment recorded (${txn.id})`, formatXaf(input.amount))
-    return txn
   }
 
-  function applyRefund(txnId: string, amount: number) {
-    updateTransactions(
-      [txnId],
-      (txn) => {
-        const refunded = txn.refunded + amount
-        return {
-          ...txn,
-          refunded,
-          status: refunded >= txn.amount ? 'refunded' : 'partialRefund',
-        }
-      },
-      `Refunded ${formatXaf(amount)}`,
-    )
-  }
-
-  function handleRefund(txnId: string, amount: number, reason: string) {
-    const txn = transactions.find(({ id }) => id === txnId)!
-    const refund: Refund = {
-      id: `RFD-${String(61 + refunds.length).padStart(4, '0')}`,
-      txnId,
-      customer: txn.customer,
-      orderId: txn.orderId,
-      original: txn.amount,
-      amount,
-      reason,
-      method: txn.method,
-      at: new Date().toISOString(),
-      requestedBy: actor,
-      approvedBy: permissions.approve ? actor : '',
-      status: permissions.approve ? 'Completed' : 'Pending Approval',
+  async function handleRefund(txnId: string, amount: number, reason: string) {
+    const txn = transactions.find(({ id }) => id === txnId)
+    if (!txn) return
+    try {
+      const refund = await requestRefund({ payment: txn.uuid, amount, reason }).unwrap()
+      setDialog(null)
+      setToast(
+        refund?.status === 'Completed'
+          ? `${formatXaf(amount)} refunded to ${txn.customer}`
+          : 'Refund request sent for manager approval',
+      )
+    } catch (error) {
+      setToast(describe(error, 'The refund wasn’t made.'))
     }
-    setRefunds([refund, ...refunds])
-    if (permissions.approve) applyRefund(txnId, amount)
-    log(
-      permissions.approve
-        ? `Refund completed (${refund.id})`
-        : `Refund requested (${refund.id})`,
-      formatXaf(amount),
-    )
-    setDialog(null)
-    setToast(
-      permissions.approve
-        ? `${formatXaf(amount)} refunded to ${txn.customer}`
-        : 'Refund request sent for manager approval',
-    )
   }
 
-  function handleRefundDecision(id: string, approve: boolean) {
-    const refund = refunds.find((item) => item.id === id)!
-    setRefunds(
-      refunds.map((item) =>
-        item.id === id
-          ? { ...item, status: approve ? 'Completed' : 'Rejected', approvedBy: actor }
-          : item,
-      ),
-    )
-    if (approve) applyRefund(refund.txnId, refund.amount)
-    log(`Refund ${approve ? 'approved' : 'rejected'} (${id})`, formatXaf(refund.amount))
-    setToast(approve ? `Refund ${id} approved` : `Refund ${id} rejected`)
+  async function handleRefundDecision(id: string, approve: boolean) {
+    try {
+      await decideRefund({ id, approve }).unwrap()
+      setToast(approve ? 'Refund approved' : 'Refund rejected')
+    } catch (error) {
+      setToast(describe(error, 'The decision wasn’t saved.'))
+    }
   }
 
-  function requestReverse(id: string) {
-    const txn = transactions.find((item) => item.id === id)!
-    setConfirm({
-      title: `Reverse ${id}?`,
-      body: `This cancels the ${formatXaf(txn.amount)} payment from ${txn.customer} as if it never settled. The order’s balance becomes outstanding again. Use a refund instead if the money was actually received.`,
-      confirmLabel: 'Reverse Payment',
-      destructive: true,
-      onConfirm: () => {
-        updateTransactions(
-          [id],
-          (item) => ({ ...item, status: 'reversed', reconciled: false }),
-          `Reversed by ${actor}`,
-        )
-        log(`Payment reversed (${id})`, 'Reversed', 'Completed')
-        setToast(`${id} reversed`)
-      },
-    })
-  }
-
-  function handleReconcile(ids: string[]) {
+  async function handleReconcile(ids: string[]) {
     const settled = transactions.filter(
-      (txn) => ids.includes(txn.id) && isCollected(txn) && !txn.reconciled,
+      (txn) => ids.includes(txn.id) && isCollected(txn) && isDigital(txn.method) && !txn.reconciled,
     )
-    updateTransactions(
-      settled.map(({ id }) => id),
-      (txn) => ({ ...txn, reconciled: true }),
-      'Reconciled',
-    )
-    setSelectedIds([])
-    log('Reconciliation', `${settled.length} transactions matched`)
-    setToast(
-      settled.length === 0
-        ? 'Nothing to reconcile: only settled payments can be matched'
-        : `${settled.length} transactions reconciled`,
-    )
+    if (settled.length === 0) {
+      setSelectedIds([])
+      setToast('Nothing to reconcile: only settled digital payments can be matched')
+      return
+    }
+    try {
+      await reconcilePayments(settled.map(({ uuid }) => uuid)).unwrap()
+      setSelectedIds([])
+      setToast(`${settled.length} ${settled.length === 1 ? 'transaction' : 'transactions'} reconciled`)
+    } catch (error) {
+      setToast(describe(error, 'The payments weren’t reconciled.'))
+    }
   }
 
   function handleScan(code: string) {
@@ -339,34 +322,19 @@ function PaymentsPage() {
               <RotateCcw className="size-4 text-muted" aria-hidden="true" />
               {permissions.approve ? 'Issue Refund' : 'Request Refund'}
             </button>
-            <button
-              type="button"
-              onClick={() => setDialog({ name: 'record', receivableId: '' })}
-              className={`${primaryButton} max-md:hidden`}
-            >
-              <Plus className="size-4" aria-hidden="true" />
-              Record Payment
-            </button>
+            {permissions.record && (
+              <button
+                type="button"
+                onClick={() => setDialog({ name: 'record', receivableId: '' })}
+                className={`${primaryButton} max-md:hidden`}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+                Record Payment
+              </button>
+            )}
           </div>
         )}
       </div>
-      <label className="flex w-fit items-center gap-2 text-[11px] whitespace-nowrap text-muted">
-        Viewing as
-        <select
-          value={role}
-          onChange={(event) => {
-            setRole(event.target.value as OrderRole)
-            setSelectedIds([])
-          }}
-          className={`${fieldClass} h-8 w-auto!`}
-        >
-          {ORDER_ROLES.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
     </div>
   )
 
@@ -378,8 +346,42 @@ function PaymentsPage() {
           <Lock className="size-8 text-muted/60" aria-hidden="true" />
           <h2 className="text-sm font-bold text-ink">No financial access</h2>
           <p className="max-w-sm text-xs text-muted">
-            Laundry staff can’t view payments unless a manager grants access.
+            Your role can’t view payments. Ask the business owner for access.
           </p>
+        </div>
+      </>
+    )
+  }
+
+  if (paymentsQuery.isLoading) {
+    return (
+      <>
+        {header}
+        <div className="animate-pulse space-y-4" aria-busy="true">
+          <p className="sr-only" role="status">Loading payments…</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-6">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div key={index} className="h-[76px] rounded-xl bg-white ring-1 ring-line" />
+            ))}
+          </div>
+          <div className="h-24 rounded-xl bg-white ring-1 ring-line" />
+          <div className="h-64 rounded-xl bg-white ring-1 ring-line" />
+          <div className="h-96 rounded-xl bg-white ring-1 ring-line" />
+        </div>
+      </>
+    )
+  }
+
+  if (paymentsQuery.isError && transactions.length === 0) {
+    return (
+      <>
+        {header}
+        <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-14 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">Couldn’t load the payments</h2>
+          <p className="max-w-md text-xs text-muted">{describe(paymentsQuery.error, 'The server refused the request.')}</p>
+          <button type="button" onClick={() => void paymentsQuery.refetch()} disabled={paymentsQuery.isFetching} className={`${secondaryButton} mt-2`}>
+            {paymentsQuery.isFetching ? 'Retrying…' : 'Try Again'}
+          </button>
         </div>
       </>
     )
@@ -402,23 +404,10 @@ function PaymentsPage() {
       <CashRegisterBar
         session={session}
         transactions={transactions}
-        canManage={permissions.reconcile}
+        canManage={permissions.record || permissions.reconcile}
         onAdjust={() => setDialog({ name: 'adjust' })}
         onClose={() => setDialog({ name: 'close' })}
-        onOpen={() => {
-          const opening = session.counted ?? cash.expected
-          setSession({
-            ...session,
-            cashier: actor,
-            openedAt: new Date().toISOString(),
-            opening,
-            adjustments: [],
-            closedAt: null,
-            counted: null,
-            varianceReason: '',
-          })
-          log('Cash register opened', formatXaf(opening))
-        }}
+        onOpen={() => setDialog({ name: 'open' })}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -457,15 +446,10 @@ function PaymentsPage() {
           onOpen={setOpenTxnId}
           onReceipt={setReceiptId}
           onRefund={(txnId) => setDialog({ name: 'refund', txnId })}
-          onReconcile={handleReconcile}
-          onFlag={(ids) => {
-            updateTransactions(ids, (txn) => ({
-              ...txn,
-              reviewReason: txn.reviewReason || `Marked for investigation by ${actor}`,
-            }))
+          onReconcile={(ids) => void handleReconcile(ids)}
+          onFlag={() => {
             setSelectedIds([])
-            log('Marked for investigation', `${ids.length} transactions`)
-            setToast(`${ids.length} transactions marked for investigation`)
+            setToast('Flagging for investigation isn’t stored by the server yet')
           }}
           onExport={(list) => {
             downloadFile('transactions.csv', transactionsToCsv(list), 'text/csv;charset=utf-8')
@@ -489,7 +473,7 @@ function PaymentsPage() {
           transactions={transactions}
           canReconcile={permissions.reconcile}
           onReconcileDigital={() =>
-            handleReconcile(
+            void handleReconcile(
               transactions.filter(({ method }) => isDigital(method)).map(({ id }) => id),
             )
           }
@@ -498,24 +482,18 @@ function PaymentsPage() {
           exceptions={exceptions}
           canResolve={permissions.reconcile}
           onOpen={setOpenTxnId}
-          onResolve={(id) => {
-            setExceptions(
-              exceptions.map((item) => (item.id === id ? { ...item, resolved: true } : item)),
-            )
-            log(`Exception resolved (${id})`)
-            setToast('Exception resolved')
-          }}
+          onResolve={(id) => setDialog({ name: 'resolve', exceptionId: id })}
         />
       </div>
 
       <RefundsPanel
         refunds={refunds}
         canApprove={permissions.approve}
-        onDecide={handleRefundDecision}
+        onDecide={(id, approve) => void handleRefundDecision(id, approve)}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <ProvidersPanel />
+        <ProvidersPanel providers={providers} loading={providersLoading} />
         <PerformanceAndRisk
           transactions={transactions}
           onReview={() => showInTable({ view: 'review' })}
@@ -523,7 +501,7 @@ function PaymentsPage() {
         <AuditTrail entries={audit} />
       </div>
 
-      <BranchComparison transactions={transactions} receivables={receivables} />
+      <BranchComparison branches={summary?.byBranch ?? []} transactions={transactions} />
 
       {permissions.record && (
         <button
@@ -539,7 +517,7 @@ function PaymentsPage() {
       {toast && (
         <p
           role="status"
-          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md bg-ink px-4 py-2.5 text-xs font-semibold text-white shadow-lg max-md:bottom-20"
+          className="fixed bottom-4 left-1/2 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-md bg-ink px-4 py-2.5 text-xs font-semibold text-white shadow-lg max-md:bottom-20"
         >
           {toast}
         </p>
@@ -551,11 +529,11 @@ function PaymentsPage() {
         onClose={() => setOpenTxnId(null)}
         onReceipt={setReceiptId}
         onRefund={(txnId) => setDialog({ name: 'refund', txnId })}
-        onReverse={requestReverse}
       />
       {dialog?.name === 'record' && (
         <RecordPaymentDialog
           receivables={receivables}
+          providers={providers}
           initialReceivableId={dialog.receivableId}
           onClose={() => setDialog(null)}
           onRecord={handleRecord}
@@ -568,67 +546,91 @@ function PaymentsPage() {
           initialTxnId={dialog.txnId}
           canApprove={permissions.approve}
           onClose={() => setDialog(null)}
-          onSubmit={handleRefund}
+          onSubmit={(txnId, amount, reason) => void handleRefund(txnId, amount, reason)}
         />
       )}
       {dialog?.name === 'remind' && (
         <ReminderDialog
           receivable={receivables.find(({ id }) => id === dialog.receivableId)!}
           onClose={() => setDialog(null)}
-          onSend={(channel, scheduled) => {
-            setReceivables(
-              receivables.map((item) =>
-                item.id === dialog.receivableId
-                  ? { ...item, lastReminderAt: new Date().toISOString() }
-                  : item,
-              ),
-            )
+          onSend={async (channel, message, scheduledFor) => {
+            try {
+              await sendReminder({
+                order: dialog.receivableId,
+                channel: CHANNELS[channel] ?? 'SMS',
+                message,
+                ...(scheduledFor ? { scheduledFor: `${scheduledFor}:00` } : {}),
+              }).unwrap()
+            } catch (error) {
+              throw new Error(describe(error, 'The reminder wasn’t sent.'), { cause: error })
+            }
             setDialog(null)
-            setToast(
-              `${channel} reminder ${scheduled ? 'scheduled' : 'prepared'}. Sending isn’t connected yet.`,
-            )
+            setToast(`${channel} reminder ${scheduledFor ? 'scheduled' : 'sent'}`)
           }}
         />
       )}
-      {dialog?.name === 'adjust' && (
+      {dialog?.name === 'resolve' && (
+        <ResolveExceptionDialog
+          reason={exceptions.find(({ id }) => id === dialog.exceptionId)?.reason ?? ''}
+          onClose={() => setDialog(null)}
+          onResolve={async (resolution) => {
+            try {
+              await updateException({ id: dialog.exceptionId, resolved: true, resolution }).unwrap()
+            } catch (error) {
+              throw new Error(describe(error, 'The exception wasn’t resolved.'), { cause: error })
+            }
+            setDialog(null)
+            setToast('Exception resolved')
+          }}
+        />
+      )}
+      {dialog?.name === 'open' && (
+        <OpenSessionDialog
+          suggestedFloat={closedSession?.counted ?? 0}
+          onClose={() => setDialog(null)}
+          onOpen={async (register, openingFloat) => {
+            try {
+              await openSession({ register, openingFloat }).unwrap()
+            } catch (error) {
+              throw new Error(describe(error, 'The register wasn’t opened.'), { cause: error })
+            }
+            setClosedSession(null)
+            setDialog(null)
+            setToast(`${register} opened with ${formatXaf(openingFloat)}`)
+          }}
+        />
+      )}
+      {dialog?.name === 'adjust' && session && (
         <CashAdjustDialog
           onClose={() => setDialog(null)}
-          onSave={(amount, reason) => {
-            setSession({
-              ...session,
-              adjustments: [
-                ...session.adjustments,
-                { at: new Date().toISOString(), amount, reason, by: actor },
-              ],
-            })
-            log(`Cash adjustment: ${reason}`, formatXaf(amount))
-            setDialog(null)
-            setToast('Cash adjustment recorded')
+          onSave={async (amount, reason) => {
+            try {
+              await adjustSession({ id: session.uuid, amount, reason }).unwrap()
+              setDialog(null)
+              setToast('Cash adjustment recorded')
+            } catch (error) {
+              setToast(describe(error, 'The adjustment wasn’t recorded.'))
+            }
           }}
         />
       )}
-      {dialog?.name === 'close' && (
+      {dialog?.name === 'close' && session && (
         <CloseSessionDialog
-          expected={cash.expected}
+          expected={session.totals.expected}
           onClose={() => setDialog(null)}
-          onConfirm={(counted, reason) => {
-            setSession({
-              ...session,
-              closedAt: new Date().toISOString(),
-              counted,
-              varianceReason: reason,
-            })
-            log(
-              'Cash register closed',
-              formatXaf(counted),
-              `expected ${formatXaf(cash.expected)}`,
-            )
-            setDialog(null)
-            setToast(
-              counted === cash.expected
-                ? 'Session closed: balanced'
-                : 'Session closed with a variance',
-            )
+          onConfirm={async (counted, reason) => {
+            try {
+              const closed = await closeSession({ id: session.uuid, counted, ...(reason ? { varianceReason: reason } : {}) }).unwrap()
+              setClosedSession(closed)
+              setDialog(null)
+              setToast(
+                counted === session.totals.expected
+                  ? 'Session closed: balanced'
+                  : 'Session closed with a variance',
+              )
+            } catch (error) {
+              setToast(describe(error, 'The session wasn’t closed.'))
+            }
           }}
         />
       )}
@@ -641,6 +643,7 @@ function PaymentsPage() {
       {confirm && (
         <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       )}
+      <span className="sr-only" aria-hidden="true">{actor}</span>
     </>
   )
 }

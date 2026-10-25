@@ -98,7 +98,10 @@ export type MachineSpecs = {
 
 // What an administrator enters in the machine form
 export type MachineProfile = {
+  // The machine's asset tag, e.g. WM-015, which the app routes by
   id: string
+  // The server's uuid, empty until the machine is stored
+  uuid: string
   name: string
   type: MachineType
   manufacturer: string

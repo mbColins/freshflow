@@ -98,7 +98,7 @@ function InventoryTable({
             ref={searchRef}
             type="search"
             aria-label="Search inventory"
-            placeholder="Search item, SKU, category, supplier, batch or location…"
+            placeholder="Search item, category, supplier, batch or location…"
             value={filters.query}
             onChange={(event) => onChange({ query: event.target.value })}
             className={`${fieldClass} h-10 pr-10 pl-9`}
@@ -167,7 +167,7 @@ function InventoryTable({
             <table className="w-full min-w-[980px] text-xs">
               <thead>
                 <tr>
-                  <th scope="col" className={headClass}>Item & SKU</th>
+                  <th scope="col" className={headClass}>Item</th>
                   <th scope="col" className={headClass}>Category</th>
                   <th scope="col" className={headClass}>Current stock</th>
                   <th scope="col" className={headClass}>Available / reserved</th>
@@ -199,7 +199,7 @@ function InventoryTable({
                         {item.name}
                       </button>
                       <span className="block font-mono text-[10px] text-muted">
-                        {item.id} · {item.location}
+                        {[item.branchName, item.location].filter(Boolean).join(' · ')}
                       </span>
                     </td>
                     <td className={`${cellClass} whitespace-nowrap text-ink`}>{item.category}</td>
@@ -295,7 +295,7 @@ function InventoryTable({
                 >
                   <span className="min-w-0">
                     <span className="block text-xs font-semibold text-ink">{item.name}</span>
-                    <span className="block font-mono text-[10px] text-muted">{item.id}</span>
+                    <span className="block text-[10px] text-muted">{item.category}</span>
                   </span>
                   <StockStatusBadge item={item} now={now} />
                 </button>

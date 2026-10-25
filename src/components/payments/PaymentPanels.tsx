@@ -13,12 +13,8 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react'
-import {
-  OTHER_BRANCH_FINANCIALS,
-  PAYMENT_PROVIDERS,
-  PAY_METHODS,
-  VARIANCE_REASONS,
-} from '../../constants/payments'
+import { PAY_METHODS, VARIANCE_REASONS } from '../../constants/payments'
+import type { PaymentProvider, PaymentSummary } from '../../services/paymentApi'
 import type {
   AuditEntry,
   CashSession,
@@ -173,13 +169,30 @@ export function CashRegisterBar({
   onClose,
   onOpen,
 }: {
-  session: CashSession
+  // Null when the person has no register open
+  session: CashSession | null
   transactions: Transaction[]
   canManage: boolean
   onAdjust: () => void
   onClose: () => void
   onOpen: () => void
 }) {
+  if (!session) {
+    return (
+      <Panel
+        title="Cash Register"
+        subtitle="No register is open. Cash payments can only be recorded while one is."
+        icon={Banknote}
+        action={
+          <button type="button" onClick={onOpen} className={primaryButton}>
+            Open Register
+          </button>
+        }
+      >
+        <p className="text-xs text-muted">Open a register with its starting float to take cash.</p>
+      </Panel>
+    )
+  }
   const cash = getCashSummary(session, transactions)
   const closed = session.closedAt !== null
   const difference = (session.counted ?? cash.expected) - cash.expected
@@ -644,7 +657,7 @@ export function RefundsPanel({
                 <tr key={refund.id} className="border-t border-line align-top">
                   <td className="py-2.5 pr-3">
                     <span className="block font-mono text-[11px] font-bold text-ink">
-                      {refund.id}
+                      RFD-{refund.id.slice(0, 6).toUpperCase()}
                     </span>
                     <span className="block font-mono text-[10px] text-muted">{refund.txnId}</span>
                   </td>
@@ -701,32 +714,45 @@ export function RefundsPanel({
 
 // ---------- Providers, performance, branches, audit ----------
 
-export function ProvidersPanel() {
+const PROVIDER_STATUS: Record<PaymentProvider['status'], { label: string; tone: 'success' | 'warning' | 'danger' }> = {
+  OPERATIONAL: { label: 'Operational', tone: 'success' },
+  DEGRADED: { label: 'Service Degraded', tone: 'warning' },
+  DOWN: { label: 'Down', tone: 'danger' },
+}
+
+export function ProvidersPanel({ providers, loading }: { providers: PaymentProvider[]; loading: boolean }) {
   return (
-    <Panel title="Payment Providers" subtitle="Configured for this branch (sample status)">
-      <ul className="space-y-2">
-        {PAYMENT_PROVIDERS.map((provider) => {
-          const degraded = provider.status !== 'Operational'
-          return (
-            <li key={provider.name} className="rounded-lg bg-field p-2.5 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate font-semibold text-ink">
-                  {provider.name}
-                  <span className="font-normal text-muted"> · {provider.method}</span>
-                </p>
-                <Badge tone={degraded ? 'warning' : 'success'}>
-                  {degraded && <TriangleAlert className="size-3" aria-hidden="true" />}
-                  {provider.status}
-                </Badge>
-              </div>
-              <p className="mt-1 text-[11px] text-muted">
-                {(provider.responseMs / 1000).toFixed(1)}s response · {provider.successRate}%
-                success · synced {provider.lastSyncMin} min ago
-              </p>
-            </li>
-          )
-        })}
-      </ul>
+    <Panel title="Payment Providers" subtitle="Configured for this branch">
+      {loading ? (
+        <ul className="animate-pulse space-y-2" aria-busy="true">
+          {[0, 1, 2].map((key) => (
+            <li key={key} className="h-14 rounded-lg bg-field" />
+          ))}
+        </ul>
+      ) : providers.length === 0 ? (
+        <PanelEmpty>No providers are set up for this branch.</PanelEmpty>
+      ) : (
+        <ul className="space-y-2">
+          {providers.map((provider) => {
+            const status = PROVIDER_STATUS[provider.status] ?? PROVIDER_STATUS.OPERATIONAL
+            return (
+              <li key={provider.provider + provider.method} className={`rounded-lg bg-field p-2.5 text-xs ${provider.enabled ? '' : 'opacity-60'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="truncate font-semibold text-ink">
+                    {provider.provider}
+                    <span className="font-normal text-muted"> · {provider.method}</span>
+                  </p>
+                  <Badge tone={provider.enabled ? status.tone : 'neutral'}>
+                    {provider.enabled && provider.status !== 'OPERATIONAL' && <TriangleAlert className="size-3" aria-hidden="true" />}
+                    {provider.enabled ? status.label : 'Disabled'}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-[11px] text-muted">Fee {provider.feePercent}% of each payment</p>
+              </li>
+            )
+          })}
+        </ul>
+      )}
     </Panel>
   )
 }
@@ -793,24 +819,25 @@ export function PerformanceAndRisk({
 }
 
 export function BranchComparison({
+  branches,
   transactions,
-  receivables,
 }: {
+  // From GET /payments/summary
+  branches: PaymentSummary['byBranch']
   transactions: Transaction[]
-  receivables: Receivable[]
 }) {
-  const rows = [
-    {
-      branch: transactions[0]?.branch ?? 'This branch',
-      revenue: getCollected(transactions),
-      transactions: transactions.filter(isCollected).length,
-      outstanding: sum(receivables, getOutstanding),
-      refunds: sum(transactions, ({ refunded }) => refunded),
-    },
-    ...OTHER_BRANCH_FINANCIALS,
-  ]
+  const rows = branches.map(({ branch, collected, outstanding }) => {
+    const own = transactions.filter((txn) => txn.branch === branch)
+    return {
+      branch,
+      revenue: collected,
+      transactions: own.filter(isCollected).length,
+      outstanding,
+      refunds: sum(own, ({ refunded }) => refunded),
+    }
+  })
   return (
-    <Panel title="Branch Financial Comparison" subtitle="Today; other branches are sample figures">
+    <Panel title="Branch Financial Comparison" subtitle="Money collected and still owed, by branch">
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[560px] text-xs">
           <thead>
@@ -824,6 +851,11 @@ export function BranchComparison({
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-6 text-center text-muted">No branch figures yet.</td>
+              </tr>
+            )}
             {rows.map((row) => (
               <tr key={row.branch} className="border-t border-line tabular-nums">
                 <th scope="row" className="py-2 pr-3 text-left font-semibold text-ink">

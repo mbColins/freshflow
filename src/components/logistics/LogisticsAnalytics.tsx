@@ -128,13 +128,9 @@ function VolumeChart() {
   )
 }
 
-function LogisticsAnalytics({
-  jobs,
-  drivers,
-}: {
-  jobs: DispatchJob[]
-  drivers: Driver[]
-}) {
+// Delivery Volume: pickups and deliveries per day (sample figures until the
+// backend reports them)
+export function DeliveryVolumePanel({ className }: { className?: string }) {
   const totalJobs = WEEKLY_VOLUME.reduce(
     (sum, { pickups, deliveries }) => sum + pickups + deliveries,
     0,
@@ -142,8 +138,33 @@ function LogisticsAnalytics({
   const onTime = Math.round(
     WEEKLY_VOLUME.reduce((sum, { onTime: rate }) => sum + rate, 0) / WEEKLY_VOLUME.length,
   )
-  const cost = COST_SUMMARY.driverCost + COST_SUMMARY.fuelEstimate
-  const profit = COST_SUMMARY.revenue - cost
+  return (
+    <Panel
+      title="Delivery Volume"
+      subtitle="Pickups and deliveries per day, this week (sample figures)"
+      icon={ChartColumn}
+      className={className}
+    >
+      <dl className="mb-3 grid grid-cols-3 gap-2 text-center">
+        {(
+          [
+            ['Jobs this week', totalJobs],
+            ['On-time rate', `${onTime}%`],
+            ['Avg distance', `${(COST_SUMMARY.kilometres / COST_SUMMARY.jobs).toFixed(1)} km`],
+          ] as [string, string | number][]
+        ).map(([label, value]) => (
+          <div key={label} className="rounded-md bg-field px-2 py-1.5">
+            <dt className="text-[10px] font-semibold text-muted">{label}</dt>
+            <dd className="text-sm font-bold text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <VolumeChart />
+    </Panel>
+  )
+}
+
+export function DriverPerformancePanel({ jobs, drivers }: { jobs: DispatchJob[]; drivers: Driver[] }) {
   const perDriver = drivers
     .map((driver) => ({
       driver,
@@ -156,79 +177,57 @@ function LogisticsAnalytics({
     .sort((a, b) => b.driver.score - a.driver.score)
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <Panel
-        title="Delivery Volume"
-        subtitle="Pickups and deliveries per day, this week (sample figures)"
-        icon={ChartColumn}
-        className="lg:col-span-2"
-      >
-        <dl className="mb-3 grid grid-cols-3 gap-2 text-center">
-          {(
-            [
-              ['Jobs this week', totalJobs],
-              ['On-time rate', `${onTime}%`],
-              ['Avg distance', `${(COST_SUMMARY.kilometres / COST_SUMMARY.jobs).toFixed(1)} km`],
-            ] as [string, string | number][]
-          ).map(([label, value]) => (
-            <div key={label} className="rounded-md bg-field px-2 py-1.5">
-              <dt className="text-[10px] font-semibold text-muted">{label}</dt>
-              <dd className="text-sm font-bold text-ink">{value}</dd>
+    <Panel title="Driver Performance" subtitle="Score, and jobs completed today">
+      <ul className="space-y-2.5">
+        {perDriver.map(({ driver, completed }) => (
+          <li key={driver.id} className="text-xs">
+            <div className="flex justify-between gap-2">
+              <span className="truncate font-semibold text-ink">{driver.name}</span>
+              <span className="shrink-0 text-muted tabular-nums">
+                {driver.score} · {completed} done
+              </span>
             </div>
-          ))}
-        </dl>
-        <VolumeChart />
-      </Panel>
-
-      <div className="min-w-0 space-y-4">
-        <Panel title="Driver Performance" subtitle="Score, and jobs completed today">
-          <ul className="space-y-2.5">
-            {perDriver.map(({ driver, completed }) => (
-              <li key={driver.id} className="text-xs">
-                <div className="flex justify-between gap-2">
-                  <span className="truncate font-semibold text-ink">{driver.name}</span>
-                  <span className="shrink-0 text-muted tabular-nums">
-                    {driver.score} · {completed} done
-                  </span>
-                </div>
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-brand/15">
-                  <div
-                    className="h-full rounded-full bg-brand"
-                    style={{ width: `${driver.score}%` }}
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-
-        <Panel title="Cost Analysis" subtitle="This month (sample figures)">
-          <dl className="space-y-1.5 text-xs">
-            {(
-              [
-                ['Delivery revenue', formatXaf(COST_SUMMARY.revenue)],
-                ['Driver cost', formatXaf(COST_SUMMARY.driverCost)],
-                ['Fuel estimate', formatXaf(COST_SUMMARY.fuelEstimate)],
-                ['Cost per delivery', formatXaf(cost / COST_SUMMARY.jobs)],
-                ['Cost per kilometre', formatXaf(cost / COST_SUMMARY.kilometres)],
-              ] as [string, string][]
-            ).map(([label, value]) => (
-              <div key={label} className="flex justify-between gap-3">
-                <dt className="text-muted">{label}</dt>
-                <dd className="font-semibold text-ink tabular-nums">{value}</dd>
-              </div>
-            ))}
-            <div className="flex justify-between gap-3 border-t border-line pt-1.5 text-sm font-bold">
-              <dt>Delivery profit</dt>
-              <dd className={profit >= 0 ? 'text-success' : 'text-danger'}>
-                {formatXaf(profit)} ({Math.round((profit / COST_SUMMARY.revenue) * 100)}%)
-              </dd>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-brand/15">
+              <div
+                className="h-full rounded-full bg-brand"
+                style={{ width: `${driver.score}%` }}
+              />
             </div>
-          </dl>
-        </Panel>
-      </div>
-    </div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   )
 }
 
-export default LogisticsAnalytics
+// Sample figures until the backend reports delivery costs
+export function CostAnalysisPanel() {
+  const cost = COST_SUMMARY.driverCost + COST_SUMMARY.fuelEstimate
+  const profit = COST_SUMMARY.revenue - cost
+  return (
+    <Panel title="Cost Analysis" subtitle="This month (sample figures)">
+      <dl className="space-y-1.5 text-xs">
+        {(
+          [
+            ['Delivery revenue', formatXaf(COST_SUMMARY.revenue)],
+            ['Driver cost', formatXaf(COST_SUMMARY.driverCost)],
+            ['Fuel estimate', formatXaf(COST_SUMMARY.fuelEstimate)],
+            ['Cost per delivery', formatXaf(cost / COST_SUMMARY.jobs)],
+            ['Cost per kilometre', formatXaf(cost / COST_SUMMARY.kilometres)],
+          ] as [string, string][]
+        ).map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-3">
+            <dt className="text-muted">{label}</dt>
+            <dd className="font-semibold text-ink tabular-nums">{value}</dd>
+          </div>
+        ))}
+        <div className="flex justify-between gap-3 border-t border-line pt-1.5 text-sm font-bold">
+          <dt>Delivery profit</dt>
+          <dd className={profit >= 0 ? 'text-success' : 'text-danger'}>
+            {formatXaf(profit)} ({Math.round((profit / COST_SUMMARY.revenue) * 100)}%)
+          </dd>
+        </div>
+      </dl>
+    </Panel>
+  )
+}

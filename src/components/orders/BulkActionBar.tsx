@@ -9,7 +9,8 @@ import {
   UserCog,
   X,
 } from 'lucide-react'
-import { PIPELINE_STATUSES, STAFF } from '../../constants/orders'
+import { PIPELINE_STATUSES } from '../../constants/orders'
+import useStaff from '../../hooks/useStaff'
 import type { Permissions } from '../../constants/orders'
 import type { FulfilmentMethod, OrderStatus } from '../../types/order'
 import Menu, { MenuItem } from '../ui/Menu'
@@ -40,6 +41,7 @@ function BulkActionBar({
   onExport,
   onCancel,
 }: BulkActionBarProps) {
+  const staff = useStaff()
   return (
     <div
       role="region"
@@ -99,9 +101,9 @@ function BulkActionBar({
           triggerClassName={actionClass}
         >
           {(close) =>
-            STAFF.map((name) => (
+            staff.map(({ uuid, name }) => (
               <MenuItem
-                key={name}
+                key={uuid}
                 onSelect={() => {
                   close()
                   onAssign(name)

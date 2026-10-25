@@ -1,6 +1,7 @@
 import type { BadgeTone } from '../components/ui/Badge'
 import type { OrderRole } from '../types/order'
 import type { SkillLevel, StaffFilters, StaffStatus } from '../types/staff'
+import type { Department, EmploymentType, SkillCode, SkillLevelCode, Weekday } from '../types/user'
 
 export const STAFF_STATUSES: {
   id: StaffStatus
@@ -46,6 +47,56 @@ export const SKILLS = [
 ]
 
 export const SKILL_LEVELS: SkillLevel[] = ['Beginner', 'Intermediate', 'Advanced', 'Expert']
+
+// The labels above as the backend's enum values (UserRequest / UserResponse)
+export const DEPARTMENT_CODES: Record<string, Department> = {
+  'Laundry Operations': 'LAUNDRY_OPERATIONS',
+  'Finishing & Press': 'FINISHING_PRESS',
+  'Quality Control': 'QUALITY_CONTROL',
+  'Front Desk': 'FRONT_DESK',
+  Delivery: 'DELIVERY',
+  Maintenance: 'MAINTENANCE',
+  Management: 'MANAGEMENT',
+}
+
+export const EMPLOYMENT_CODES: Record<string, EmploymentType> = {
+  'Full-time': 'FULL_TIME',
+  'Part-time': 'PART_TIME',
+  Temporary: 'TEMPORARY',
+  Contract: 'CONTRACT',
+  Intern: 'INTERN',
+}
+
+export const SKILL_CODES: Record<string, SkillCode> = {
+  Washing: 'WASHING',
+  Drying: 'DRYING',
+  Ironing: 'IRONING',
+  Folding: 'FOLDING',
+  'Stain Treatment': 'STAIN_TREATMENT',
+  'Quality Control': 'QUALITY_CONTROL',
+  Packaging: 'PACKAGING',
+  'Customer Service': 'CUSTOMER_SERVICE',
+  Driving: 'DRIVING',
+  'Machine Maintenance': 'MACHINE_MAINTENANCE',
+}
+
+export const SKILL_LEVEL_CODES: Record<SkillLevel, SkillLevelCode> = {
+  Beginner: 'BEGINNER',
+  Intermediate: 'INTERMEDIATE',
+  Advanced: 'ADVANCED',
+  Expert: 'EXPERT',
+}
+
+// Monday first, as the backend's DayOfWeek
+export const WEEKDAYS: { code: Weekday; short: string }[] = [
+  { code: 'MONDAY', short: 'Mon' },
+  { code: 'TUESDAY', short: 'Tue' },
+  { code: 'WEDNESDAY', short: 'Wed' },
+  { code: 'THURSDAY', short: 'Thu' },
+  { code: 'FRIDAY', short: 'Fri' },
+  { code: 'SATURDAY', short: 'Sat' },
+  { code: 'SUNDAY', short: 'Sun' },
+]
 
 export const TASK_TYPES: { label: string; skill: string }[] = [
   { label: 'Laundry order (washing)', skill: 'Washing' },

@@ -17,7 +17,8 @@ type PaymentDrawerProps = {
   onClose: () => void
   onReceipt: (id: string) => void
   onRefund: (id: string) => void
-  onReverse: (id: string) => void
+  // Reversing a payment has no endpoint yet, so the button only shows when given
+  onReverse?: (id: string) => void
 }
 
 function PaymentDrawer({
@@ -63,7 +64,7 @@ function PaymentDrawer({
                 {permissions.approve ? 'Refund' : 'Request Refund'}
               </button>
             )}
-            {permissions.approve && txn.status === 'completed' && (
+            {permissions.approve && onReverse && txn.status === 'completed' && (
               <button type="button" onClick={() => onReverse(txn.id)} className={secondaryButton}>
                 <Undo2 className="size-4 text-danger" aria-hidden="true" />
                 Reverse

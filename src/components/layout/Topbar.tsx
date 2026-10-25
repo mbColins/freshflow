@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
 import { CalendarDays, Menu, Plus, Search, Store } from 'lucide-react'
+import useCurrentUser from '../../hooks/useCurrentUser'
 import NotificationBell from './NotificationBell'
 
 const BRANCHES = ['Downtown Branch', 'Akwa Branch', 'Bonapriso Branch']
@@ -17,6 +18,7 @@ type TopbarProps = {
 
 function Topbar({ onOpenMenu }: TopbarProps) {
   const searchRef = useRef<HTMLInputElement>(null)
+  const me = useCurrentUser()
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -85,8 +87,12 @@ function Topbar({ onOpenMenu }: TopbarProps) {
 
         <NotificationBell />
 
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">
-          MV
+        <span
+          title={me.user ? me.user.username || me.user.email : undefined}
+          aria-label={me.name ? `Signed in as ${me.name}` : undefined}
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white"
+        >
+          {me.isLoading ? '' : me.initials}
         </span>
       </div>
     </header>

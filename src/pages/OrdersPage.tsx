@@ -13,6 +13,8 @@ import {
 } from '../components/orders/OrderDialogs'
 import type { ConfirmRequest } from '../components/orders/OrderDialogs'
 import OrderDrawer from '../components/orders/OrderDrawer'
+import CancelOrderDialog from '../components/orders/CancelOrderDialog'
+import ImportOrdersDialog from '../components/orders/ImportOrdersDialog'
 import OrderPipeline from '../components/orders/OrderPipeline'
 import OrderStats from '../components/orders/OrderStats'
 import OrderSummaryCards from '../components/orders/OrderSummaryCards'
@@ -28,31 +30,32 @@ import type { SortState } from '../components/orders/OrdersTable'
 import OrdersToolbar from '../components/orders/OrdersToolbar'
 import type { OrdersView } from '../components/orders/OrdersToolbar'
 import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
-import {
-  CURRENT_USER,
-  EMPTY_FILTERS,
-  OPTIONAL_COLUMNS,
-  PERMISSIONS,
-  STAFF_PERSPECTIVE_USER,
-} from '../constants/orders'
-import type { PreviewState } from '../constants/orders'
+import { EMPTY_FILTERS, OPTIONAL_COLUMNS } from '../constants/orders'
+import type { Permissions, PreviewState } from '../constants/orders'
+import useCurrentUser from '../hooks/useCurrentUser'
 import useCustomers from '../hooks/useCustomers'
+import useStaff from '../hooks/useStaff'
 import useLocalStorage from '../hooks/useLocalStorage'
 import { useChangeOrders, useOrdersQuery } from '../hooks/useOrders'
 import {
-  useAddOrderPaymentMutation,
-  useUpdateOrderQcMutation,
+  useAssignOrderMutation,
+  useCancelOrderMutation,
+  useCompleteOrderMutation,
+  useGetOrderQuery,
+  useQualityCheckMutation,
+  useUpdateOrderMutation,
   useUpdateOrderStatusMutation,
 } from '../services/orderApi'
-import { toApiPaymentMethod, toApiStatus } from '../utils/orderMapping'
+import type { OrderPatch } from '../services/orderApi'
+import { useRecordPaymentMutation } from '../services/paymentApi'
+import { describeError } from '../utils/apiReasons'
+import { toApiStatus } from '../utils/orderMapping'
 import useNow from '../hooks/useNow'
 import type {
   FulfilmentMethod,
   Order,
   OrderFilters,
-  OrderRole,
   OrderStatus,
-  PaymentMethod,
   QualityCheck,
   SavedView,
 } from '../types/order'
@@ -73,7 +76,7 @@ import { toOrderCustomer } from '../utils/customers'
 const PAGE_SIZES = [10, 25, 50]
 const TOAST_MS = 4000
 
-type DialogName = 'new' | 'scan' | 'filters' | 'prefs'
+type DialogName = 'new' | 'scan' | 'filters' | 'prefs' | 'import'
 
 function OrdersPage() {
   const now = useNow()
@@ -81,10 +84,18 @@ function OrdersPage() {
   const orders = ordersQuery.items
   const changeOrders = useChangeOrders()
   const [updateStatus] = useUpdateOrderStatusMutation()
-  const [addPayment] = useAddOrderPaymentMutation()
-  const [updateQc] = useUpdateOrderQcMutation()
-  const [role, setRole] = useState<OrderRole>('manager')
-  const [preview, setPreview] = useState<PreviewState>('normal')
+  const [patchOrder] = useUpdateOrderMutation()
+  const [assignOrder] = useAssignOrderMutation()
+  const [cancelOrder] = useCancelOrderMutation()
+  const [qualityCheck] = useQualityCheckMutation()
+  const [completeOrder] = useCompleteOrderMutation()
+  const [recordPayment] = useRecordPaymentMutation()
+  const staff = useStaff()
+  const { can, name: actor } = useCurrentUser()
+  // The orders being cancelled, while the reason is asked for
+  const [cancelIds, setCancelIds] = useState<string[] | null>(null)
+  // Why the last change was refused, for the toast
+  const refusal = useRef('')
   const [filters, setFilters] = useState<OrderFilters>(EMPTY_FILTERS)
   const [sort, setSort] = useState<SortState>({ key: 'id', direction: 'desc' })
   const [page, setPage] = useState(1)
@@ -121,24 +132,26 @@ function OrdersPage() {
   )
   const requestedOrderId = searchParams.get('order')
 
-  const permissions = PERMISSIONS[role]
-  const actor = role === 'staff' ? STAFF_PERSPECTIVE_USER : CURRENT_USER
+  // From the role's permissions; everything is allowed until the profile says otherwise
+  const permissions: Permissions = {
+    create: can('ORDERS:CREATE'),
+    updateStatus: can('ORDERS:EDIT'),
+    assign: can('ORDERS:ASSIGN'),
+    payments: can('PAYMENTS:VIEW'),
+    cancel: can('ORDERS:CANCEL'),
+    financials: can('PAYMENTS:VIEW'),
+    configure: can('SETTINGS:EDIT_BUSINESS'),
+    assignedOnly: false,
+  }
 
-  // The preview switch overrides what the request says, for checking layouts
-  const loadState: PreviewState = ordersQuery.isLoading
+  const shown: PreviewState = ordersQuery.isLoading
     ? 'loading'
     : ordersQuery.isError && orders.length === 0
       ? 'error'
       : 'normal'
-  const shown = preview === 'normal' ? loadState : preview
 
-  // Everything the current role may see, before filters
-  const visibleOrders =
-    shown === 'empty'
-      ? []
-      : permissions.assignedOnly
-        ? orders.filter(({ assignedTo }) => assignedTo === STAFF_PERSPECTIVE_USER)
-        : orders
+  // The server scopes the list to what the person may see
+  const visibleOrders = orders
   const filtered = visibleOrders
     .filter((order) => matchesFilters(order, filters, now))
     .sort(
@@ -151,10 +164,11 @@ function OrdersPage() {
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   )
-  const openOrder =
-    visibleOrders.find(
-      ({ id }) => id === (openOrderId ?? requestedOrderId),
-    ) ?? null
+  const openId = openOrderId ?? requestedOrderId
+  // The single-order read carries the timeline, which the list leaves out
+  const { data: openDetail } = useGetOrderQuery(openId ?? '', { skip: !openId })
+  const listedOpen = visibleOrders.find(({ id }) => id === openId) ?? null
+  const openOrder = listedOpen ? (openDetail?.id === listedOpen.id ? openDetail : listedOpen) : null
   const receiptOrder = orders.find(({ id }) => id === receiptId)
   const columns = OPTIONAL_COLUMNS.filter(
     ({ financial }) => permissions.financials || !financial,
@@ -204,12 +218,6 @@ function OrdersPage() {
     })
   }
 
-  function handleRoleChange(next: OrderRole) {
-    setRole(next)
-    setSelectedIds([])
-    setOpenOrderId(null)
-  }
-
   // Shows a change at once and sends it with `send`, if given; the toast says
   // `done`, plus how many orders the server refused (those are put back).
   // Without `send` the change has no endpoint yet and stays on screen only.
@@ -220,13 +228,26 @@ function OrdersPage() {
     send?: (order: Order) => Promise<unknown>,
   ) {
     const targets = orders.filter(({ id }) => ids.includes(id))
-    const refused = await changeOrders(targets, update, send)
+    refusal.current = ''
+    const refused = await changeOrders(
+      targets,
+      update,
+      send &&
+        (async (order) => {
+          try {
+            return await send(order)
+          } catch (error) {
+            refusal.current = describeError(error, 'The server refused this change.')
+            throw error
+          }
+        }),
+    )
     setToast(
       refused === 0
         ? done
         : refused === targets.length
-          ? 'The server refused this change. Nothing was saved, try again.'
-          : `${done}, but ${refused} of ${targets.length} orders couldn’t be saved.`,
+          ? refusal.current || 'The server refused this change. Nothing was saved, try again.'
+          : `${done}, but ${refused} of ${targets.length} orders couldn’t be saved. ${refusal.current}`.trim(),
     )
   }
 
@@ -240,11 +261,19 @@ function OrdersPage() {
     }
   }
 
-  // PATCH /order/{id}/status. The backend only allows forward moves (and
-  // cancelling with a note), so moving an order back is refused
+  // PATCH /order/{orderNumber} with any of the fields the backend's update reads
+  const patch = (order: Order, changes: OrderPatch) =>
+    patchOrder({ orderNumber: order.id, changes }).unwrap()
+
+  // PATCH /order/{orderNumber} with the new status. The backend only allows
+  // forward moves (and cancelling), so moving an order back is refused
   function applyStatus(ids: string[], status: OrderStatus) {
+    // Cancelling needs a reason
+    if (status === 'cancelled') {
+      requestCancel(ids)
+      return
+    }
     const label = getStatus(status).label
-    const note = status === 'cancelled' ? 'Cancelled from the Orders page' : undefined
     void updateOrders(
       ids,
       (order) =>
@@ -259,30 +288,46 @@ function OrdersPage() {
                     ? new Date().toISOString()
                     : order.completedAt,
               },
-              status === 'cancelled' ? 'Order cancelled' : `Moved to ${label}`,
-              note,
+              `Moved to ${label}`,
             ),
-      ids.length === 1
-        ? `Order #${ids[0]} ${status === 'cancelled' ? 'cancelled' : `moved to ${label}`}`
-        : `${ids.length} orders ${status === 'cancelled' ? 'cancelled' : `moved to ${label}`}`,
+      ids.length === 1 ? `Order #${ids[0]} moved to ${label}` : `${ids.length} orders moved to ${label}`,
       (order) =>
         order.status === status
           ? Promise.resolve()
-          : updateStatus({ uuid: order.uuid!, status: toApiStatus(status), note }).unwrap(),
+          : status === 'completed'
+            ? completeOrder(order.id).unwrap()
+            : updateStatus({ orderNumber: order.id, status: toApiStatus(status) }).unwrap(),
     )
   }
 
   function requestCancel(ids: string[]) {
-    setConfirm({
-      title: ids.length === 1 ? `Cancel order #${ids[0]}?` : `Cancel ${ids.length} orders?`,
-      body: 'Cancelled orders leave the processing pipeline. Any payment already recorded stays on the order and has to be refunded separately.',
-      confirmLabel: ids.length === 1 ? 'Cancel Order' : 'Cancel Orders',
-      destructive: true,
-      onConfirm: () => {
-        applyStatus(ids, 'cancelled')
-        setSelectedIds([])
-      },
-    })
+    setCancelIds(ids)
+  }
+
+  // One request per order; the server decides who may cancel and when
+  async function handleCancel(ids: string[], reason: string) {
+    let cancelled = 0
+    let refundDue = 0
+    try {
+      for (const id of ids) {
+        const order = await cancelOrder({ orderNumber: id, reason }).unwrap()
+        cancelled += 1
+        refundDue += order?.refundDue ?? 0
+      }
+    } catch (error) {
+      if (cancelled === 0) throw new Error(describeError(error, 'The cancellation wasn’t saved.'), { cause: error })
+      setToast(`${cancelled} cancelled, then stopped: ${describeError(error, 'The server refused.')}`)
+      setCancelIds(null)
+      setSelectedIds([])
+      return
+    }
+    setCancelIds(null)
+    setSelectedIds([])
+    setToast(
+      `${cancelled === 1 ? `Order #${ids[0]}` : `${cancelled} orders`} cancelled${
+        refundDue > 0 ? `. ${formatXaf(refundDue)} was already paid and waits for a refund on the Payments page` : ''
+      }`,
+    )
   }
 
   function handleKanbanMove(id: string, status: OrderStatus) {
@@ -300,121 +345,92 @@ function OrdersPage() {
     })
   }
 
-  // Staff are picked by name, and the order API takes a staff uuid
-  // TODO: send assignedToId once the staff list comes from the API
-  function handleAssign(ids: string[], staff: string) {
+  // Staff are picked by name; the order API takes their uuid
+  function handleAssign(ids: string[], name: string) {
+    const person = staff.find((member) => member.name === name)
+    if (!person) return
     void updateOrders(
       ids,
       (order) =>
-        order.assignedTo === staff
+        order.assignedToId === person.uuid
           ? order
-          : withEvent({ ...order, assignedTo: staff }, `Assigned to ${staff}`),
-      `Assigned to ${staff}`,
-    )
-  }
-
-  function handleRecordPayment(
-    id: string,
-    payment: { amount: number; method: PaymentMethod; reference: string },
-  ) {
-    void updateOrders(
-      [id],
+          : withEvent({ ...order, assignedTo: person.name, assignedToId: person.uuid }, `Assigned to ${person.name}`),
+      `Assigned to ${person.name}`,
       (order) =>
-        withEvent(
-          {
-            ...order,
-            payments: [
-              ...order.payments,
-              { ...payment, at: new Date().toISOString(), by: actor },
-            ],
-          },
-          `Payment received (${formatXaf(payment.amount)}, ${payment.method})`,
-        ),
-      `Payment of ${formatXaf(payment.amount)} recorded`,
-      (order) =>
-        addPayment({
-          uuid: order.uuid!,
-          amount: payment.amount,
-          method: toApiPaymentMethod(payment.method),
-          reference: payment.reference,
-        }).unwrap(),
-    )
-  }
-
-  // One cash payment for each order's balance
-  function handleMarkPaid(ids: string[]) {
-    const owing = (order: Order) => (order.status === 'cancelled' ? 0 : getBalance(order))
-    void updateOrders(
-      ids,
-      (order) => {
-        const balance = owing(order)
-        if (balance <= 0) return order
-        return withEvent(
-          {
-            ...order,
-            payments: [
-              ...order.payments,
-              {
-                amount: balance,
-                method: 'Cash',
-                reference: '',
-                at: new Date().toISOString(),
-                by: actor,
-              },
-            ],
-          },
-          `Marked as paid (${formatXaf(balance)})`,
-        )
-      },
-      'Outstanding balances marked as paid',
-      (order) =>
-        owing(order) <= 0
+        order.assignedToId === person.uuid
           ? Promise.resolve()
-          : addPayment({ uuid: order.uuid!, amount: owing(order), method: 'CASH', reference: '' }).unwrap(),
+          : assignOrder({ orderNumber: order.id, assignedTo: person.uuid }).unwrap(),
     )
   }
 
-  // The order API can't change the fulfilment method yet
-  // TODO: send it once PATCH /order/{id} accepts fulfilmentMethod
+  // One cash payment for each order's balance, recorded like any other payment
+  // (it needs an open cash register)
+  async function handleMarkPaid(ids: string[]) {
+    let recorded = 0
+    try {
+      for (const order of orders.filter(({ id }) => ids.includes(id))) {
+        const balance = order.status === 'cancelled' ? 0 : getBalance(order)
+        if (balance <= 0) continue
+        await recordPayment({ order: order.id, amount: balance, method: 'CASH' }).unwrap()
+        recorded += 1
+      }
+      setToast(recorded === 0 ? 'Nothing was owing' : `${recorded} cash ${recorded === 1 ? 'payment' : 'payments'} recorded`)
+    } catch (error) {
+      setToast(`${recorded} recorded, then stopped: ${describeError(error, 'The payment wasn’t recorded.')}`)
+    }
+  }
+
+  // Pickup or delivery is the order's deliveryOptions; a delivery needs an address
   function handleSchedule(ids: string[], method: FulfilmentMethod) {
+    const missing = method === 'delivery' ? orders.find((order) => ids.includes(order.id) && !order.address) : undefined
+    const address = missing ? window.prompt(`Delivery address for order #${missing.id}`)?.trim() : undefined
+    if (missing && !address) {
+      setToast('A delivery order needs an address.')
+      return
+    }
     void updateOrders(
       ids,
       (order) =>
         withEvent(
-          { ...order, method },
+          { ...order, method, address: order.address ?? address },
           method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled',
         ),
       method === 'delivery' ? 'Delivery scheduled' : 'Pickup scheduled',
+      (order) =>
+        order.method === method
+          ? Promise.resolve()
+          : patch(order, {
+              deliveryOptions: method === 'delivery' ? 'DELIVERY' : 'PICKUP',
+              ...(method === 'delivery' ? { deliveryAddress: order.address ?? address } : {}),
+            }),
     )
   }
 
-  // PATCH /order/{id}/qc, then READY when it passed. A failed check sends the
-  // order back to Washing, which the backend has to do itself: status moves are
-  // forward-only for everyone else
+  // POST /order/{orderNumber}/quality-check: a pass moves the order to Ready, a
+  // failure sends it back to Washing or Ironing, and the checks are kept
   function handleQualityResult(id: string, qc: QualityCheck) {
     const passed = qc.result === 'passed'
+    const backTo = qc.sendBackTo === 'IRONING' ? 'ironing' : 'washing'
     void updateOrders(
       [id],
       (order) =>
         withEvent(
-          { ...order, qc, status: passed ? 'ready' : 'washing' },
+          { ...order, qc, status: passed ? 'ready' : backTo },
           passed
             ? 'Quality check passed, moved to Ready'
-            : 'Quality check failed, sent back to Washing',
+            : `Quality check failed, sent back to ${getStatus(backTo).label}`,
           qc.reason,
         ),
       passed
         ? `Order #${id} passed quality check`
-        : `Order #${id} sent back to Washing`,
-      async (order) => {
-        await updateQc({
-          uuid: order.uuid!,
+        : `Order #${id} sent back to ${getStatus(backTo).label}`,
+      (order) =>
+        qualityCheck({
+          orderNumber: order.id,
           checks: qc.checks,
           result: passed ? 'PASSED' : 'FAILED',
-          reason: qc.reason,
-        }).unwrap()
-        if (passed) await updateStatus({ uuid: order.uuid!, status: 'READY' }).unwrap()
-      },
+          ...(passed ? {} : { reason: qc.reason, sendBackTo: qc.sendBackTo ?? 'WASHING' }),
+        }).unwrap(),
     )
   }
 
@@ -464,11 +480,9 @@ function OrdersPage() {
   return (
     <>
       <OrdersHeader
-        role={role}
-        onRoleChange={handleRoleChange}
         permissions={permissions}
-        preview={preview}
-        onPreviewChange={setPreview}
+        canImport={can('ORDERS:IMPORT')}
+        onImport={() => setDialog('import')}
         confirmMoves={confirmMoves}
         onConfirmMovesChange={setConfirmMoves}
         onNewOrder={() => setDialog('new')}
@@ -480,14 +494,11 @@ function OrdersPage() {
       {shown === 'loading' && <OrdersSkeleton />}
       {shown === 'error' && (
         <OrdersErrorState
-          onRetry={() => {
-            setPreview('normal')
-            void ordersQuery.refetch()
-          }}
+          onRetry={() => void ordersQuery.refetch()}
         />
       )}
 
-      {(shown === 'normal' || shown === 'empty') && (
+      {shown === 'normal' && (
         <>
           <OrderStats
             orders={visibleOrders}
@@ -544,7 +555,7 @@ function OrdersPage() {
               onClear={() => setSelectedIds([])}
               onSetStatus={(status) => applyStatus(selectedIds, status)}
               onAssign={(staff) => handleAssign(selectedIds, staff)}
-              onMarkPaid={() => handleMarkPaid(selectedIds)}
+              onMarkPaid={() => void handleMarkPaid(selectedIds)}
               onSchedule={(method) => handleSchedule(selectedIds, method)}
               onExport={() => handleExport(selectedOrders)}
               onCancel={() => requestCancel(selectedIds)}
@@ -680,7 +691,6 @@ function OrdersPage() {
         }}
         onSetStatus={(id, status) => applyStatus([id], status)}
         onAssign={(id, staff) => handleAssign([id], staff)}
-        onRecordPayment={handleRecordPayment}
         onQualityResult={handleQualityResult}
         onPrint={setReceiptId}
         onCancel={(id) => requestCancel([id])}
@@ -715,6 +725,18 @@ function OrdersPage() {
           order={receiptOrder}
           now={now}
           onClose={() => setReceiptId(null)}
+        />
+      )}
+      {cancelIds && (
+        <CancelOrderDialog orders={cancelIds} onClose={() => setCancelIds(null)} onConfirm={(reason) => handleCancel(cancelIds, reason)} />
+      )}
+      {dialog === 'import' && (
+        <ImportOrdersDialog
+          onClose={() => setDialog(null)}
+          onDone={(created) => {
+            setDialog(null)
+            setToast(`Imported ${created} ${created === 1 ? 'order' : 'orders'}`)
+          }}
         />
       )}
       {confirm && (

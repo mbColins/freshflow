@@ -1,65 +1,44 @@
-import { CURRENT_USER } from '../constants/orders'
-import {
-  SAMPLE_NOTIFICATIONS,
-  SAMPLE_NOTIFICATION_LOG,
-  SAMPLE_RULES,
-  SAMPLE_TEMPLATES,
-} from '../constants/sampleNotifications'
-import type {
-  AppNotification,
-  AutomationRule,
-  MessageTemplate,
-  NotificationLogEntry,
-} from '../types/notification'
+import { SAMPLE_NOTIFICATION_LOG, SAMPLE_RULES, SAMPLE_TEMPLATES } from '../constants/sampleNotifications'
+import type { AutomationRule, MessageTemplate, NotificationLogEntry } from '../types/notification'
 import { createStore } from './createStore'
 
-// In-memory notification centre shared by the page, the bell in the top bar and the menu badge.
-// TODO: replace with the notifications API and a live connection; changes are lost on reload.
+// Automation rules and message templates have no backend yet, so they live
+// here and last until the page is reloaded. The inbox itself, its channel
+// figures and preferences come from the notification centre API
 type State = {
-  notifications: AppNotification[]
   rules: AutomationRule[]
   templates: MessageTemplate[]
   log: NotificationLogEntry[]
 }
 
 const store = createStore<State>({
-  notifications: SAMPLE_NOTIFICATIONS,
   rules: SAMPLE_RULES,
   templates: SAMPLE_TEMPLATES,
   log: SAMPLE_NOTIFICATION_LOG,
 })
 
-function setState(next: Partial<State>, logged?: [action: string, entity: string]) {
+function setState(next: Partial<State>, logged: [action: string, entity: string] | undefined, by: string) {
   const state = store.get()
   store.set({
     ...state,
     ...next,
-    log: logged
-      ? [{ at: new Date().toISOString(), user: CURRENT_USER, action: logged[0], entity: logged[1] }, ...(next.log ?? state.log)]
-      : (next.log ?? state.log),
+    log: logged ? [{ at: new Date().toISOString(), user: by, action: logged[0], entity: logged[1] }, ...state.log] : state.log,
   })
 }
 
 export const notificationStore = {
-  // Changes the given notifications; pass a log entry for anything worth auditing
-  update(ids: string[], change: (notification: AppNotification) => AppNotification, logged?: [string, string]) {
-    setState({ notifications: store.get().notifications.map((item) => (ids.includes(item.id) ? change(item) : item)) }, logged)
-  },
-  add(notification: AppNotification, logged: [string, string]) {
-    setState({ notifications: [notification, ...store.get().notifications] }, logged)
-  },
-  saveRule(rule: AutomationRule, logged: [string, string]) {
+  saveRule(rule: AutomationRule, logged: [string, string], by: string) {
     const { rules } = store.get()
     const exists = rules.some(({ id }) => id === rule.id)
-    setState({ rules: exists ? rules.map((item) => (item.id === rule.id ? rule : item)) : [rule, ...rules] }, logged)
+    setState({ rules: exists ? rules.map((item) => (item.id === rule.id ? rule : item)) : [rule, ...rules] }, logged, by)
   },
-  saveTemplate(template: MessageTemplate, logged: [string, string]) {
+  saveTemplate(template: MessageTemplate, logged: [string, string], by: string) {
     const { templates } = store.get()
     const exists = templates.some(({ id }) => id === template.id)
-    setState({ templates: exists ? templates.map((item) => (item.id === template.id ? template : item)) : [template, ...templates] }, logged)
+    setState({ templates: exists ? templates.map((item) => (item.id === template.id ? template : item)) : [template, ...templates] }, logged, by)
   },
-  log(action: string, entity: string) {
-    setState({}, [action, entity])
+  log(action: string, entity: string, by: string) {
+    setState({}, [action, entity], by)
   },
 }
 

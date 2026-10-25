@@ -1,7 +1,8 @@
 import type { BadgeTone } from '../components/ui/Badge'
 
 export type JobType = 'pickup' | 'delivery'
-export type JobPriority = 'standard' | 'express' | 'flexible'
+// Backend DispatchPriority: STANDARD, EXPRESS, SAME_DAY
+export type JobPriority = 'standard' | 'express' | 'sameDay'
 export type JobStatus =
   | 'requested'
   | 'scheduled'
@@ -56,6 +57,15 @@ export type DispatchJob = {
   // Position on the illustrative map
   x: number
   y: number
+  // From the API: the fee charged, the driver's name (the page's driver list
+  // may not include them) and the branch the job's zone belongs to
+  fee?: number
+  driverName?: string
+  branchId?: string
+  // The delivery zone's uuid (`zone` is its name)
+  zoneId?: string
+  // Short reference shown to staff, e.g. PCK-00042; `id` is the API's uuid
+  code?: string
 }
 
 export type Driver = {

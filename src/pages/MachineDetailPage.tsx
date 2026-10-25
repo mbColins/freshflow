@@ -18,13 +18,12 @@ import { ConfirmDialog } from '../components/orders/OrderDialogs'
 import type { ConfirmRequest } from '../components/orders/OrderDialogs'
 import { iconButton, primaryButton, secondaryButton } from '../components/orders/styles'
 import Menu, { MenuItem } from '../components/ui/Menu'
-import { MACHINE_PERMISSIONS } from '../constants/machines'
-import { CURRENT_USER } from '../constants/orders'
+
+import useCurrentUser from '../hooks/useCurrentUser'
 import useBranches from '../hooks/useBranches'
-import useLocalStorage from '../hooks/useLocalStorage'
-import useMachines, { machineStore } from '../hooks/useMachines'
+import useMachinePermissions from '../hooks/useMachinePermissions'
+import { machineStore, useMachineList } from '../hooks/useMachines'
 import useNow from '../hooks/useNow'
-import type { OrderRole } from '../types/order'
 import { formatRuntime, getMaintenance, getOpenFault, isOperational, withActivity } from '../utils/machines'
 import { formatDay } from '../utils/promotions'
 
@@ -43,21 +42,31 @@ function MachineDetailPage() {
   const { machineId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const now = useNow()
-  const machines = useMachines()
+  const { machines, isLoading } = useMachineList()
   const branches = useBranches()
+  const me = useCurrentUser().name || 'You'
   const machine = machines.find(({ id }) => id === machineId)
-  const [role] = useLocalStorage<OrderRole>('machines.role', 'admin')
   const [dialog, setDialog] = useState<MachineDialogState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  const permissions = MACHINE_PERMISSIONS[role]
+  const permissions = useMachinePermissions()
 
   useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), TOAST_MS)
     return () => window.clearTimeout(timer)
   }, [toast])
+
+  if (!machine && isLoading) {
+    return (
+      <div className="space-y-3" aria-busy="true">
+        <p className="sr-only" role="status">Loading the machine…</p>
+        <div className="h-32 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+        <div className="h-72 animate-pulse rounded-xl bg-white ring-1 ring-line" />
+      </div>
+    )
+  }
 
   if (!machine) {
     return (
@@ -71,8 +80,8 @@ function MachineDetailPage() {
     )
   }
 
-  const branchOptions = branches.map(({ id, name }) => ({ id, name }))
-  const branchName = (id: string) => branches.find((branch) => branch.id === id)?.name ?? id
+  const branchOptions = branches.map(({ uuid, name }) => ({ id: uuid, name }))
+  const branchName = (id: string) => branchOptions.find((branch) => branch.id === id)?.name ?? id
   const activeTab = TABS.find(({ id }) => id === searchParams.get('tab')) ?? TABS[0]
   const ActivePanel = activeTab.panel
   const openTab = (id: string) => setSearchParams(id === 'overview' ? {} : { tab: id }, { replace: true })
@@ -89,7 +98,7 @@ function MachineDetailPage() {
   function toggleOffline() {
     const offline = machine!.status === 'offline'
     change(
-      (current) => withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, CURRENT_USER, offline ? 'Marked available' : 'Marked unavailable'),
+      (current) => withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, me, offline ? 'Marked available' : 'Marked unavailable'),
       `${machine!.name} marked ${offline ? 'available' : 'unavailable'}`,
     )
   }

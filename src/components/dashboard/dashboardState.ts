@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { UserType } from '../../types/user'
 
 export const VIEW_STATES = [
   { value: 'normal', label: 'Normal' },
@@ -17,6 +18,26 @@ export const ROLES = [
 ] as const
 
 export type Role = (typeof ROLES)[number]['value']
+
+// The dashboard a user type gets: owners and admins see everything, managers
+// too, front-desk staff the counter view, washers and cleaners the plant view
+export function roleForUserType(userType: UserType | null | undefined): Role {
+  switch (userType) {
+    case 'SYSTEM_ADMIN':
+    case 'TENANT':
+    case 'OWNER':
+      return 'admin'
+    case 'WASHER':
+    case 'DRY_CLEANER':
+      return 'plant'
+    case 'FRONT_DESK':
+    case 'STAFF_MEMBER':
+    case 'DELIVERY_AGENT':
+      return 'counter'
+    default:
+      return 'manager'
+  }
+}
 
 export type SectionId =
   | 'kpis'

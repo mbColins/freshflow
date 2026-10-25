@@ -6,9 +6,9 @@ import {
   JOB_STATUSES,
   READY_TOO_LONG_MIN,
   STATUS_LABELS,
-  ZONES,
 } from '../constants/logistics'
 import { toCsv } from './csv'
+import type { DeliveryZone } from '../types/deliveryZone'
 import type {
   DispatchJob,
   JobPriority,
@@ -25,6 +25,11 @@ export function getJobStatusLabel(job: Pick<DispatchJob, 'status' | 'type'>) {
 
 export function getStatusTone(status: JobStatus) {
   return JOB_STATUSES.find(({ id }) => id === status)!.tone
+}
+
+// The reference staff see and type, e.g. PCK-00042
+export function jobRef(job: Pick<DispatchJob, 'id' | 'code'>) {
+  return job.code || job.id
 }
 
 export function isClosed(job: DispatchJob) {
@@ -101,11 +106,14 @@ export function matchesLogisticsFilters(
   }
 }
 
-export function estimateFee(zone: string, type: JobType, priority: JobPriority) {
-  const base =
-    type === 'pickup'
-      ? DELIVERY_PRICING.pickupFee
-      : (ZONES.find(({ name }) => name === zone)?.fee ?? 0)
+// What a trip costs: the zone's collection fee for a pickup, its delivery fee
+// for a delivery, plus the express surcharge. 0 without a zone
+export function estimateFee(
+  zone: Pick<DeliveryZone, 'collectionFee' | 'deliveryFee'> | undefined,
+  type: JobType,
+  priority: JobPriority,
+) {
+  const base = zone ? (type === 'pickup' ? zone.collectionFee : zone.deliveryFee) : 0
   return base + (priority === 'express' ? DELIVERY_PRICING.expressSurcharge : 0)
 }
 

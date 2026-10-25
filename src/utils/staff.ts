@@ -1,14 +1,19 @@
 import {
   CERT_WARNING_DAYS,
+  DEPARTMENT_CODES,
+  EMPLOYMENT_CODES,
   LATE_ALERT_COUNT,
   ON_DUTY,
   OVERLOAD_RATIO,
+  SKILL_CODES,
+  SKILL_LEVEL_CODES,
   SKILL_LEVELS,
   STAFF_STATUSES,
+  WEEKDAYS,
 } from '../constants/staff'
 import { USER_TYPES } from '../constants/users'
-import type { StaffFilters, StaffMember, StaffStatus } from '../types/staff'
-import type { AppUser, UserType } from '../types/user'
+import type { SkillLevel, StaffFilters, StaffMember, StaffStatus } from '../types/staff'
+import type { AppUser, UserType, Weekday } from '../types/user'
 import { toCsv } from './csv'
 
 const DAY_MS = 86_400_000
@@ -216,29 +221,60 @@ const TYPE_DEPARTMENTS: Partial<Record<UserType, string>> = {
   SYSTEM_ADMIN: 'Management',
 }
 
-// A user from the users API as a staff record. The API has no shifts,
-// attendance, tasks, scores, skills, pay or leave yet, so those start empty
-// with the same defaults as a new hire (no absences, nothing assigned).
+// The label for a backend code from one of the CODES maps in constants/staff
+export function labelFor<T extends string>(codes: Record<string, T>, code: T | null | undefined) {
+  return Object.keys(codes).find((label) => codes[label] === code) ?? ''
+}
+
+// ["MONDAY", ..., "SATURDAY"] -> "Mon–Sat"; gaps are listed: "Mon, Wed, Fri"
+export function formatWorkingDays(days: Weekday[]) {
+  const picked = WEEKDAYS.filter(({ code }) => days.includes(code))
+  if (picked.length === 0) return ''
+  if (picked.length === 7) return 'Every day'
+  const indexes = picked.map(({ code }) => WEEKDAYS.findIndex((day) => day.code === code))
+  const runs: number[][] = []
+  for (const index of indexes) {
+    const last = runs.at(-1)
+    if (last && index === last.at(-1)! + 1) last.push(index)
+    else runs.push([index])
+  }
+  return runs
+    .map((run) =>
+      run.length >= 3
+        ? `${WEEKDAYS[run[0]].short}–${WEEKDAYS[run.at(-1)!].short}`
+        : run.map((index) => WEEKDAYS[index].short).join(', '),
+    )
+    .join(', ')
+}
+
+// A user from the users API as a staff record. The employment details come
+// from the user; the API has no attendance, tasks or scores yet, so those
+// start with the same defaults as a new hire (no absences, nothing assigned)
 export function memberFromUser(user: AppUser): StaffMember {
   const typeLabel = user.userType ? USER_TYPES[user.userType] : ''
+  const details = user.staff
+  const suspended = !user.active || details.accountStatus === 'SUSPENDED'
   return {
     id: user.uuid,
     username: user.username,
     name: `${user.firstName} ${user.lastName}`.trim() || user.username,
-    jobTitle: user.role || typeLabel || 'Staff',
-    department: (user.userType && TYPE_DEPARTMENTS[user.userType]) || 'Laundry Operations',
+    jobTitle: details.jobTitle || user.role || typeLabel || 'Staff',
+    department:
+      labelFor(DEPARTMENT_CODES, details.department) ||
+      (user.userType && TYPE_DEPARTMENTS[user.userType]) ||
+      'Laundry Operations',
     branch: user.branch || 'No branch',
     phone: user.phone,
     email: user.email,
-    employment: 'Not recorded',
-    hiredAt: user.createdAt,
-    manager: user.createdBy || 'Not recorded',
+    employment: labelFor(EMPLOYMENT_CODES, details.employmentType) || 'Not recorded',
+    hiredAt: details.hiredAt || user.createdAt,
+    manager: details.managerName || 'Not recorded',
     // The server role; the permission preview only knows the local templates
     template: user.role || typeLabel,
-    status: user.active ? 'offline' : 'suspended',
-    shiftStart: '',
-    shiftEnd: '',
-    workingDays: '',
+    status: suspended ? 'suspended' : 'offline',
+    shiftStart: details.shiftStart,
+    shiftEnd: details.shiftEnd,
+    workingDays: formatWorkingDays(details.workingDays),
     clockIn: '',
     breakMinutes: 0,
     assignment: '',
@@ -253,18 +289,27 @@ export function memberFromUser(user: AppUser): StaffMember {
     onTime: 0,
     quality: 0,
     rating: 0,
-    skills: [],
-    certification: null,
+    skills: details.skills.flatMap(({ skill, level }) => {
+      const name = labelFor(SKILL_CODES, skill)
+      const levelLabel = labelFor(SKILL_LEVEL_CODES, level) as SkillLevel | ''
+      return name && levelLabel ? [{ name, level: levelLabel }] : []
+    }),
+    certification: details.certification,
     trainingDone: 0,
     trainingTotal: 10,
-    emergencyContact: 'Not provided',
-    monthlySalary: 0,
-    leaveBalance: 0,
-    twoFactor: false,
-    loginAccess: user.active,
+    emergencyContact: details.emergencyContact || 'Not provided',
+    monthlySalary: details.monthlySalary,
+    leaveBalance: details.leaveBalance,
+    twoFactor: details.twoFactorRequired,
+    loginAccess: user.active && details.loginAccess,
     lastLoginAt: user.lastLoginTime,
-    activity: user.createdAt
-      ? [{ at: user.createdAt, text: user.createdBy ? `Account created by ${user.createdBy}` : 'Account created' }]
-      : [],
+    activity: [
+      ...(suspended && details.statusReason
+        ? [{ at: user.updatedAt || user.createdAt, text: `Account suspended: ${details.statusReason}` }]
+        : []),
+      ...(user.createdAt
+        ? [{ at: user.createdAt, text: user.createdBy ? `Account created by ${user.createdBy}` : 'Account created' }]
+        : []),
+    ],
   }
 }

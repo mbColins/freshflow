@@ -57,12 +57,14 @@ export type QualityCheck = {
   checks: Record<string, boolean>
   result: 'pending' | 'passed' | 'failed'
   reason?: string
+  // For a failure: the stage the order goes back to
+  sendBackTo?: 'WASHING' | 'IRONING'
 }
 
 export type Order = {
   // The order number shown to people, e.g. ORD-10421
   id: string
-  // What the API addresses the order by; absent for orders not from the API
+  // What the API addresses the order by (the order number); absent for orders not from the API
   uuid?: string
   invoice: string
   customer: Customer
@@ -72,9 +74,13 @@ export type Order = {
   createdAt: string
   dueAt: string
   completedAt?: string
+  // The branch's name, and its uuid for orders from the API
   branch: string
+  branchId?: string
   createdBy: string
   assignedTo: string
+  // The assigned staff member's uuid, empty when nobody is
+  assignedToId: string
   method: FulfilmentMethod
   address?: string
   driver?: string
@@ -86,6 +92,9 @@ export type Order = {
   customerNotes: string
   staffNotes: string
   handling: string
+  // Why it was cancelled, and what was paid and now waits for a refund
+  cancelReason: string
+  refundDue: number
   qc: QualityCheck
   timeline: TimelineEntry[]
 }

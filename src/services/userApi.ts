@@ -1,5 +1,16 @@
 import type { ApiResponse } from '../types/api'
-import type { AppUser, UserRequest, UserStatus, UserType } from '../types/user'
+import type {
+  AppUser,
+  Department,
+  EmploymentType,
+  SkillCode,
+  SkillLevelCode,
+  StaffDetails,
+  UserRequest,
+  UserStatus,
+  UserType,
+  Weekday,
+} from '../types/user'
 import { api } from './api'
 
 // UserResponse as sent. Note the lowercase `firstname` / `lastname`
@@ -20,11 +31,75 @@ type RawUser = {
   createdBy?: string | null
   branch?: string | null
   tenant?: string | null
-  role?: string | null
+  // A plain name in the staff lists, { uuid, name, scope } on /users/me
+  role?: string | { uuid?: string; name?: string | null; scope?: string | null } | null
+  platformAdmin?: boolean
+  tenantOwner?: boolean
+  permissions?: string[] | null
+  menus?: string[] | null
+  subscription?: { status?: string | null } | null
   channel?: string | null
   createdAt?: string | null
   updatedAt?: string | null
   lastLoginTime?: string | null
+  branchUuid?: string | null
+  roleId?: number | null
+  employeeNumber?: string | null
+  emergencyContact?: string | null
+  jobTitle?: string | null
+  department?: string | null
+  employmentType?: string | null
+  hiredAt?: string | null
+  managerId?: string | null
+  managerName?: string | null
+  loginAccess?: boolean | null
+  twoFactorRequired?: boolean | null
+  shiftStart?: string | null
+  shiftEnd?: string | null
+  workingDays?: string[] | null
+  skills?: { skill?: string | null; level?: string | null }[] | null
+  monthlySalary?: number | string | null
+  leaveBalance?: number | string | null
+  certification?: { name?: string | null; expiresAt?: string | null } | null
+  accountStatus?: string | null
+  statusReason?: string | null
+}
+
+// BigDecimal may arrive as a number or a string
+const toAmount = (value: unknown) => {
+  const amount = typeof value === 'string' ? Number(value) : value
+  return typeof amount === 'number' && Number.isFinite(amount) ? amount : 0
+}
+// LocalTime may come as "08:00" or "08:00:00"; the UI works in HH:mm
+const toClock = (value: string | null | undefined) => (value ? value.slice(0, 5) : '')
+
+function toStaffDetails(raw: RawUser): StaffDetails {
+  return {
+    employeeNumber: raw.employeeNumber ?? '',
+    emergencyContact: raw.emergencyContact ?? '',
+    jobTitle: raw.jobTitle ?? '',
+    department: (raw.department as Department | null | undefined) ?? null,
+    employmentType: (raw.employmentType as EmploymentType | null | undefined) ?? null,
+    hiredAt: raw.hiredAt ?? '',
+    managerId: raw.managerId ?? '',
+    managerName: raw.managerName ?? '',
+    // The backend treats a missing value as allowed
+    loginAccess: raw.loginAccess !== false,
+    twoFactorRequired: raw.twoFactorRequired ?? false,
+    shiftStart: toClock(raw.shiftStart),
+    shiftEnd: toClock(raw.shiftEnd),
+    workingDays: (raw.workingDays ?? []) as Weekday[],
+    skills: (raw.skills ?? []).flatMap(({ skill, level }) =>
+      skill && level ? [{ skill: skill as SkillCode, level: level as SkillLevelCode }] : [],
+    ),
+    monthlySalary: toAmount(raw.monthlySalary),
+    leaveBalance: toAmount(raw.leaveBalance),
+    certification: raw.certification?.name
+      ? { name: raw.certification.name, expiresAt: raw.certification.expiresAt ?? '' }
+      : null,
+    accountStatus: raw.accountStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE',
+    statusReason: raw.statusReason ?? '',
+  }
 }
 
 function toUser(raw: RawUser): AppUser {
@@ -44,11 +119,23 @@ function toUser(raw: RawUser): AppUser {
     createdBy: raw.createdBy ?? '',
     branch: raw.branch ?? '',
     tenant: raw.tenant ?? '',
-    role: raw.role ?? '',
+    role: typeof raw.role === 'object' && raw.role ? (raw.role.name ?? '') : (raw.role ?? ''),
     channel: raw.channel ?? '',
     createdAt: raw.createdAt ?? '',
     updatedAt: raw.updatedAt ?? '',
     lastLoginTime: raw.lastLoginTime ?? '',
+    branchUuid: raw.branchUuid ?? '',
+    roleId: raw.roleId ?? null,
+    staff: toStaffDetails(raw),
+    access: Array.isArray(raw.permissions)
+      ? {
+          platformAdmin: raw.platformAdmin === true,
+          tenantOwner: raw.tenantOwner === true,
+          permissions: raw.permissions,
+          menus: raw.menus ?? [],
+          subscriptionStatus: raw.subscription?.status ?? '',
+        }
+      : null,
   }
 }
 

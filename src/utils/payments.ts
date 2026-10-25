@@ -55,21 +55,15 @@ export function formatDue(receivable: Receivable, now: number) {
   return `${-days} ${days === -1 ? 'day' : 'days'} ago`
 }
 
+// What the till should hold comes from the server; only the count of cash
+// transactions is worked out here
 export function getCashSummary(session: CashSession, transactions: Transaction[]) {
   const since = new Date(session.openedAt).getTime()
-  const cash = transactions.filter(
+  const count = transactions.filter(
     (txn) => txn.method === 'Cash' && new Date(txn.at).getTime() >= since,
-  )
-  const collected = getCollected(cash)
-  const refunds = sum(cash, ({ refunded }) => refunded)
-  const adjustments = sum(session.adjustments, ({ amount }) => amount)
-  return {
-    count: cash.length,
-    collected,
-    refunds,
-    adjustments,
-    expected: session.opening + collected - refunds + adjustments,
-  }
+  ).length
+  const { cashPayments, cashRefunds, adjustments, expected } = session.totals
+  return { count, collected: cashPayments, refunds: cashRefunds, adjustments, expected }
 }
 
 export function matchesPaymentFilters(txn: Transaction, filters: PaymentFilters) {

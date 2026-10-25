@@ -9,6 +9,7 @@ import {
   SKILLS,
   SKILL_LEVELS,
   TASK_TYPES,
+  WEEKDAYS,
 } from '../../constants/staff'
 import type {
   OpenShift,
@@ -18,8 +19,10 @@ import type {
 import { USER_TYPES } from '../../constants/users'
 import { useGetBranchDropdownQuery } from '../../services/branchApi'
 import { useGetRoleDropdownQuery } from '../../services/userApi'
-import type { UserType } from '../../types/user'
-import { recommendStaff } from '../../utils/staff'
+import type { UserType, Weekday } from '../../types/user'
+import { toLocalInput } from '../../utils/dates'
+import { formatXaf } from '../../utils/orders'
+import { formatWorkingDays, recommendStaff } from '../../utils/staff'
 import { USERNAME_PATTERN } from '../../utils/tenants'
 import { fieldClass, primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Badge from '../ui/Badge'
@@ -482,6 +485,8 @@ const STAFF_USER_TYPES: UserType[] = [
 ]
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+// An optional amount: empty, or a number of 0 or more
+const isAmount = (value: string) => value.trim() === '' || (Number.isFinite(Number(value)) && Number(value) >= 0)
 
 // Account fields go to POST /users; the rest (job title, department,
 // employment, schedule, skills…) is kept for this session only until the
@@ -510,17 +515,30 @@ export type NewStaffInput = {
   twoFactor: boolean
   shiftStart: string
   shiftEnd: string
-  workingDays: string
+  workingDays: Weekday[]
   skills: { name: string; level: SkillLevel }[]
+  // YYYY-MM-DD
+  hiredAt: string
+  // The manager's user uuid ('' = none)
+  managerId: string
+  // Typed as text so an empty field reads as "not set", not 0
+  monthlySalary: string
+  leaveBalance: string
+  certificationName: string
+  // YYYY-MM-DD, optional
+  certificationExpiresAt: string
 }
 
 export function StaffWizard({
   saving = false,
   error,
+  managers = [],
   onClose,
   onCreate,
 }: {
   saving?: boolean
+  // Who the new person can report to
+  managers?: { id: string; name: string }[]
   // Server error from the last attempt, shown above the steps
   error?: string | null
   onClose: () => void
@@ -529,7 +547,8 @@ export function StaffWizard({
   const [step, setStep] = useState(0)
   const branches = useGetBranchDropdownQuery()
   const roles = useGetRoleDropdownQuery()
-  const [draft, setDraft] = useState<NewStaffInput>({
+  // Lazy so today's date is read once, not on every render
+  const [draft, setDraft] = useState<NewStaffInput>(() => ({
     username: '',
     firstName: '',
     lastName: '',
@@ -550,9 +569,15 @@ export function StaffWizard({
     twoFactor: false,
     shiftStart: '08:00',
     shiftEnd: '17:00',
-    workingDays: 'Mon–Sat',
+    workingDays: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'],
     skills: [],
-  })
+    hiredAt: toLocalInput(Date.now()).slice(0, 10),
+    managerId: '',
+    monthlySalary: '',
+    leaveBalance: '',
+    certificationName: '',
+    certificationExpiresAt: '',
+  }))
   const patch = (change: Partial<NewStaffInput>) => setDraft({ ...draft, ...change })
   const granted = ROLE_TEMPLATES[draft.template] ?? {}
 
@@ -565,6 +590,12 @@ export function StaffWizard({
       'A valid email is required: the sign-in details are sent there (Personal).',
     !draft.jobTitle.trim() && 'Job title is required (Employment).',
     draft.shiftStart >= draft.shiftEnd && 'Shift end must be after shift start (Schedule).',
+    draft.workingDays.length === 0 && 'Pick at least one working day (Schedule).',
+    !isAmount(draft.monthlySalary) && 'Monthly salary must be a number of 0 or more (Employment).',
+    !isAmount(draft.leaveBalance) && 'Leave balance must be a number of 0 or more (Employment).',
+    Boolean(draft.certificationExpiresAt) &&
+      !draft.certificationName.trim() &&
+      'Give the certification a name, or clear its expiry date (Skills).',
   ].filter((problem): problem is string => Boolean(problem))
 
   const text = (
@@ -580,13 +611,18 @@ export function StaffWizard({
       | 'neighborhood'
       | 'emergencyContact'
       | 'jobTitle'
-      | 'workingDays',
-    options: { type?: string; wide?: boolean; placeholder?: string } = {},
+      | 'hiredAt'
+      | 'monthlySalary'
+      | 'leaveBalance'
+      | 'certificationName'
+      | 'certificationExpiresAt',
+    options: { type?: string; wide?: boolean; placeholder?: string; hint?: string } = {},
   ) => (
-    <FormField label={label} htmlFor={id} wide={options.wide}>
+    <FormField label={label} htmlFor={id} wide={options.wide} hint={options.hint}>
       <input
         id={id}
         type={options.type ?? 'text'}
+        {...(options.type === 'number' ? { min: 0, inputMode: 'numeric' as const } : {})}
         autoComplete="off"
         placeholder={options.placeholder}
         value={draft[key]}
@@ -737,10 +773,24 @@ export function StaffWizard({
             </select>
           </FormField>
           {choice('staff-employment', 'Employment type', 'employment', EMPLOYMENT_TYPES)}
-          <p className="text-[11px] text-muted sm:col-span-2">
-            Job title, department and employment type are kept for this session only until the
-            server stores them.
-          </p>
+          {text('staff-hired', 'Hire date', 'hiredAt', { type: 'date' })}
+          <FormField label="Reports to" htmlFor="staff-manager" hint="Optional">
+            <select
+              id="staff-manager"
+              value={draft.managerId}
+              onChange={(event) => patch({ managerId: event.target.value })}
+              className={fieldClass}
+            >
+              <option value="">No manager</option>
+              {managers.map(({ id, name }) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          {text('staff-salary', 'Monthly salary (XAF)', 'monthlySalary', { type: 'number', hint: 'Optional' })}
+          {text('staff-leave', 'Leave balance (days)', 'leaveBalance', { type: 'number', hint: 'Optional' })}
         </div>
       )}
 
@@ -810,10 +860,7 @@ export function StaffWizard({
       )}
 
       {step === 3 && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <p className="text-[11px] text-muted sm:col-span-3">
-            The schedule is kept for this session only until the server stores it.
-          </p>
+        <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="Shift start" htmlFor="staff-start">
             <input
               id="staff-start"
@@ -832,11 +879,43 @@ export function StaffWizard({
               className={fieldClass}
             />
           </FormField>
-          {text('staff-days', 'Working days', 'workingDays')}
+          <fieldset className="sm:col-span-2">
+            <legend className="mb-1 text-[11px] font-semibold text-ink">Working days</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map(({ code, short }) => {
+                const on = draft.workingDays.includes(code)
+                return (
+                  <label
+                    key={code}
+                    className={`flex cursor-pointer items-center rounded-md px-3 py-1.5 text-xs font-semibold transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand ${
+                      on ? 'bg-brand text-white' : 'bg-field text-muted hover:text-ink'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() =>
+                        patch({
+                          workingDays: on
+                            ? draft.workingDays.filter((day) => day !== code)
+                            : WEEKDAYS.map((day) => day.code).filter(
+                                (day) => day === code || draft.workingDays.includes(day),
+                              ),
+                        })
+                      }
+                      className="sr-only"
+                    />
+                    {short}
+                  </label>
+                )
+              })}
+            </div>
+          </fieldset>
         </div>
       )}
 
       {step === 4 && (
+        <div className="space-y-4">
         <ul className="grid gap-2 sm:grid-cols-2">
           {SKILLS.map((skill) => (
             <li key={skill} className="flex items-center gap-2 rounded-lg bg-field px-3 py-2">
@@ -857,6 +936,11 @@ export function StaffWizard({
             </li>
           ))}
         </ul>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {text('staff-cert', 'Certification', 'certificationName', { placeholder: 'e.g. Chemical handling', hint: 'Optional' })}
+          {text('staff-cert-expiry', 'Certification expires', 'certificationExpiresAt', { type: 'date', hint: 'Optional' })}
+        </div>
+        </div>
       )}
 
       {step === 5 && (
@@ -874,9 +958,19 @@ export function StaffWizard({
                 ['Department', draft.department],
                 ['Branch', draft.branch],
                 ['Employment', draft.employment],
+                ['Hired', draft.hiredAt || '—'],
+                ['Reports to', managers.find(({ id }) => id === draft.managerId)?.name ?? 'No manager'],
+                ['Monthly salary', draft.monthlySalary ? formatXaf(Number(draft.monthlySalary)) : 'Not set'],
+                ['Leave balance', draft.leaveBalance ? `${draft.leaveBalance} days` : 'Not set'],
                 ['Role', draft.template || 'None'],
-                ['Shift', `${draft.shiftStart}–${draft.shiftEnd}, ${draft.workingDays}`],
+                ['Shift', `${draft.shiftStart}–${draft.shiftEnd}, ${formatWorkingDays(draft.workingDays) || 'no days'}`],
                 ['Skills', draft.skills.map(({ name, level }) => `${name} (${level})`).join(', ') || 'None'],
+                [
+                  'Certification',
+                  draft.certificationName.trim()
+                    ? `${draft.certificationName.trim()}${draft.certificationExpiresAt ? `, expires ${draft.certificationExpiresAt}` : ''}`
+                    : 'None',
+                ],
                 ['Login', draft.loginAccess ? `Enabled${draft.twoFactor ? ', 2FA required' : ''}` : 'Disabled'],
               ] as [string, string][]
             ).map(([label, value]) => (

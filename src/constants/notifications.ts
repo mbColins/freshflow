@@ -12,7 +12,6 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import type { BadgeTone } from '../components/ui/Badge'
 import type {
-  ChannelStats,
   NotificationCategory,
   NotificationChannel,
   NotificationFilters,
@@ -20,7 +19,6 @@ import type {
   NotificationPriority,
   NotificationTab,
 } from '../types/notification'
-import type { OrderRole } from '../types/order'
 
 export const CATEGORIES: { value: NotificationCategory; label: string; icon: LucideIcon }[] = [
   { value: 'orders', label: 'Orders', icon: ClipboardList },
@@ -68,15 +66,16 @@ export const FAILURE_REASONS = [
 ]
 
 // Totals for the last 30 days. TODO: read these from the messaging providers.
-export const CHANNEL_STATS: ChannelStats[] = [
-  { channel: 'In-App', status: 'Operational', note: '', sent: 1860, delivered: 1860, failed: 0, read: 1420, avgSeconds: 0.1 },
-  { channel: 'Push', status: 'Operational', note: '', sent: 3310, delivered: 3280, failed: 30, read: 2150, avgSeconds: 0.4 },
-  { channel: 'SMS', status: 'Operational', note: '', sent: 4120, delivered: 4046, failed: 74, read: null, avgSeconds: 1.2 },
-  { channel: 'WhatsApp', status: 'Operational', note: '', sent: 5210, delivered: 5168, failed: 42, read: 4410, avgSeconds: 0.9 },
-  { channel: 'Email', status: 'Degraded', note: 'The mail gateway is slow. Messages are queued and sent late; other channels are unaffected.', sent: 980, delivered: 942, failed: 38, read: 510, avgSeconds: 14 },
+
+// Who a new message can be sent to: the audiences POST /notification-center/messages takes
+export const COMPOSE_AUDIENCES: { value: string; label: string; kind: 'customer' | 'staff'; help: string }[] = [
+  { value: 'CUSTOMERS', label: 'All customers', kind: 'customer', help: 'Those who chose a channel and have an address; promotional messages also need their consent' },
+  { value: 'STAFF_ALL', label: 'All staff', kind: 'staff', help: 'Every active staff member' },
+  { value: 'BRANCH_MANAGERS', label: 'Branch managers', kind: 'staff', help: 'The managers of the branch' },
+  { value: 'OWNER', label: 'Business owner', kind: 'staff', help: 'The account owner' },
 ]
 
-// Who a new notification or an automation rule can be sent to, with a headcount estimate
+// Who an automation rule can notify, with a headcount estimate
 export const AUDIENCES: { value: string; kind: 'customer' | 'staff'; recipients: number }[] = [
   { value: 'All customers', kind: 'customer', recipients: 5788 },
   { value: 'VIP customers', kind: 'customer', recipients: 312 },
@@ -130,17 +129,10 @@ export const TEMPLATE_VARIABLES: Record<string, string> = {
   trackingLink: 'freshflow.cm/t/10482',
 }
 
-export const NOTIFICATION_ROLES = ['Administrator', 'Manager', 'Receptionist', 'Laundry Staff', 'Driver']
-
+// Until the server answers: no role is restricted and quiet hours are off
 export const DEFAULT_PREFERENCES: NotificationPreferences = {
-  roles: {
-    Administrator: ['orders', 'customers', 'operations', 'delivery', 'payments', 'inventory', 'staff', 'machines', 'system'],
-    Manager: ['orders', 'operations', 'delivery', 'payments', 'inventory', 'staff', 'machines'],
-    Receptionist: ['orders', 'customers', 'payments'],
-    'Laundry Staff': ['orders', 'operations', 'machines'],
-    Driver: ['delivery'],
-  },
-  quietHours: { enabled: true, from: '22:00', to: '07:00' },
+  roles: {},
+  quietHours: { enabled: false, from: '22:00', to: '07:00' },
 }
 
 export const EMPTY_NOTIFICATION_FILTERS: NotificationFilters = {
@@ -150,20 +142,6 @@ export const EMPTY_NOTIFICATION_FILTERS: NotificationFilters = {
   channel: '',
   branch: '',
   date: '',
-}
-
-export type NotificationPermissions = {
-  // Create notifications, edit rules, templates and preferences
-  manage: boolean
-  // null means every category
-  categories: NotificationCategory[] | null
-}
-
-export const NOTIFICATION_PERMISSIONS: Record<OrderRole, NotificationPermissions> = {
-  admin: { manage: true, categories: null },
-  manager: { manage: true, categories: null },
-  receptionist: { manage: false, categories: ['orders', 'customers', 'payments'] },
-  staff: { manage: false, categories: ['orders', 'operations', 'machines'] },
 }
 
 // Validated chart colour for single-series bars

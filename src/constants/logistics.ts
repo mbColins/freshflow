@@ -31,28 +31,18 @@ export const STATUS_LABELS: Record<JobStatus, { pickup: string; delivery: string
   cancelled: { pickup: 'Cancelled', delivery: 'Cancelled' },
 }
 
-export const PICKUP_FLOW: JobStatus[] = [
-  'requested',
-  'scheduled',
-  'assigned',
-  'enRoute',
-  'done',
-  'received',
-]
-export const DELIVERY_FLOW: JobStatus[] = [
-  'requested',
-  'scheduled',
-  'assigned',
-  'enRoute',
-  'done',
-]
+// The backend's transitions: SCHEDULED → ASSIGNED → EN_ROUTE → ARRIVED →
+// COMPLETED, with FAILED / CANCELLED on the way and FAILED back to SCHEDULED.
+// 'requested' and 'received' have no backend status and never come from the API
+export const PICKUP_FLOW: JobStatus[] = ['scheduled', 'assigned', 'enRoute', 'arrived', 'done']
+export const DELIVERY_FLOW: JobStatus[] = ['scheduled', 'assigned', 'enRoute', 'arrived', 'done']
 
 export const CLOSED_STATUSES: JobStatus[] = ['done', 'received', 'failed', 'cancelled']
 
 export const PRIORITIES: { id: JobPriority; label: string; tone: BadgeTone }[] = [
   { id: 'express', label: 'Express', tone: 'danger' },
   { id: 'standard', label: 'Standard', tone: 'neutral' },
-  { id: 'flexible', label: 'Flexible', tone: 'neutral' },
+  { id: 'sameDay', label: 'Same Day', tone: 'warning' },
 ]
 
 export const DRIVER_STATUSES: { id: DriverStatus; label: string; tone: BadgeTone }[] = [

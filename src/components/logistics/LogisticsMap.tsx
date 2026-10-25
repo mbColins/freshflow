@@ -4,7 +4,7 @@ import { Minus, Phone, Plus, Route, UserCog, X } from 'lucide-react'
 import { DEPOT, TYPE_COLORS, ZONES } from '../../constants/logistics'
 import type { DispatchJob, Driver } from '../../types/logistics'
 import { getInitials } from '../../utils/customers'
-import { getDelayMinutes, isClosed } from '../../utils/logistics'
+import { getDelayMinutes, isClosed, jobRef } from '../../utils/logistics'
 import { primaryButton, secondaryButton } from '../orders/styles'
 import { DriverStatusBadge } from './LogisticsBits'
 
@@ -160,7 +160,7 @@ function LogisticsMap({
               const failed = job.status === 'failed'
               const delayed = getDelayMinutes(job, now) > 0
               const closed = job.status === 'done' || job.status === 'received'
-              const label = `${job.type === 'pickup' ? 'Pickup' : 'Delivery'} ${job.id} for ${job.customer}${failed ? ', failed' : delayed ? ', delayed' : ''}`
+              const label = `${job.type === 'pickup' ? 'Pickup' : 'Delivery'} ${jobRef(job)} for ${job.customer}${failed ? ', failed' : delayed ? ', delayed' : ''}`
               return (
                 <g
                   key={job.id}

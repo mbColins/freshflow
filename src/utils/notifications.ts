@@ -1,14 +1,12 @@
 import {
-  AUDIENCES,
   CATEGORIES,
-  CHANNEL_STATS,
   PRIORITIES,
   TEMPLATE_VARIABLES,
 } from '../constants/notifications'
 import type {
   AppNotification,
   AutomationRule,
-  ComposeInput,
+  ChannelStats,
   NotificationCategory,
   NotificationFilters,
   NotificationPriority,
@@ -130,9 +128,9 @@ export function getTimeline(notification: AppNotification) {
   return steps
 }
 
-export function getDeliveryRate() {
-  const sent = CHANNEL_STATS.reduce((sum, stats) => sum + stats.sent, 0)
-  const delivered = CHANNEL_STATS.reduce((sum, stats) => sum + stats.delivered, 0)
+export function getDeliveryRate(stats: ChannelStats[]) {
+  const sent = stats.reduce((sum, item) => sum + item.sent, 0)
+  const delivered = stats.reduce((sum, item) => sum + item.delivered, 0)
   return { sent, delivered, failed: sent - delivered, rate: sent ? (delivered / sent) * 100 : 0 }
 }
 
@@ -162,36 +160,6 @@ export function getUnknownVariables(body: string) {
 }
 
 // ---------- Creating ----------
-
-export function getRecipientCount(audience: string) {
-  return AUDIENCES.find(({ value }) => value === audience)?.recipients ?? 0
-}
-
-export function composeNotification(input: ComposeInput, id: string, by: string): AppNotification {
-  const audience = AUDIENCES.find(({ value }) => value === input.audience)
-  const at = new Date().toISOString()
-  return {
-    id,
-    category: audience?.kind === 'customer' ? 'customers' : 'staff',
-    priority: 'Low',
-    title: input.title,
-    message: input.message,
-    audience: audience?.kind ?? 'staff',
-    recipient: `${input.audience} (${getRecipientCount(input.audience).toLocaleString('en-US')})`,
-    branchId: input.branchId,
-    channels: input.channels,
-    delivery: input.scheduledFor ? 'scheduled' : 'delivered',
-    createdAt: at,
-    scheduledFor: input.scheduledFor ? new Date(input.scheduledFor).toISOString() : null,
-    failure: null,
-    related: null,
-    read: true,
-    readAt: input.scheduledFor ? null : at,
-    resolved: false,
-    archived: false,
-    createdBy: by,
-  }
-}
 
 export function notificationsToCsv(notifications: AppNotification[]) {
   const header = ['ID', 'Created', 'Category', 'Priority', 'Title', 'Message', 'Recipient', 'Branch', 'Channels', 'Delivery', 'Failure reason', 'Read', 'Resolved']

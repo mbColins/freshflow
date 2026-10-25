@@ -31,7 +31,14 @@ import {
   WorkforceOverview,
 } from '../components/staff/StaffPanels'
 import { CURRENT_USER, ORDER_ROLES } from '../constants/orders'
-import { EMPTY_STAFF_FILTERS, STAFF_PERMISSIONS } from '../constants/staff'
+import {
+  DEPARTMENT_CODES,
+  EMPLOYMENT_CODES,
+  EMPTY_STAFF_FILTERS,
+  SKILL_CODES,
+  SKILL_LEVEL_CODES,
+  STAFF_PERMISSIONS,
+} from '../constants/staff'
 import useCurrentUser from '../hooks/useCurrentUser'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
@@ -40,6 +47,7 @@ import {
   useDeleteUserMutation,
   useListTenantUsersQuery,
   useListUsersQuery,
+  useUpdateUserMutation,
 } from '../services/userApi'
 import type { OrderRole } from '../types/order'
 import type { LeaveRequest, OpenShift, StaffFilters, StaffMember } from '../types/staff'
@@ -71,18 +79,16 @@ function StaffPage() {
   const users = hasTenant ? tenantUsers.data : allUsers.data?.items
   const loadingStaff = me.isLoading || source.isLoading
   const loadFailed = me.isError || source.isError
-  // The API has no shifts, attendance, tasks or leave yet, so what's recorded
-  // here is kept for this session only, laid over the server's users:
-  // `overlay` by uuid after any change, `pending` by username for the extras
-  // entered when creating someone (the create response has no uuid)
+  // Employment details come from the server. The API has no attendance, tasks
+  // or leave yet, so what's recorded for those is kept for this session only,
+  // laid over the server's users by uuid
   // TODO: replace with the staff endpoints once the backend has them
   const [overlay, setOverlay] = useState<Record<string, StaffMember>>({})
-  const [pending, setPending] = useState<Record<string, Partial<StaffMember>>>({})
   const staff = useMemo(
     () =>
-      (users ?? []).map((user) => {
+      (users ?? []).map((user): StaffMember => {
         const fromApi = memberFromUser(user)
-        const local = overlay[user.uuid] ?? { ...fromApi, ...pending[user.username] }
+        const local = overlay[user.uuid] ?? fromApi
         return {
           ...local,
           // The server owns the account details
@@ -93,15 +99,17 @@ function StaffPage() {
           email: fromApi.email,
           hiredAt: fromApi.hiredAt,
           lastLoginAt: fromApi.lastLoginAt,
-          status: user.active ? local.status : 'suspended',
+          // The server owns suspension too
+          status: fromApi.status === 'suspended' ? 'suspended' : local.status === 'suspended' ? 'offline' : local.status,
         }
       }),
-    [users, overlay, pending],
+    [users, overlay],
   )
   const [leave, setLeave] = useState<LeaveRequest[]>([])
   const [openShifts, setOpenShifts] = useState<OpenShift[]>([])
   const [createUser, { error: createError, isLoading: creating, reset: resetCreate }] = useCreateUserMutation()
   const [deleteUser] = useDeleteUserMutation()
+  const [updateUser] = useUpdateUserMutation()
   const [filters, setFilters] = useState<StaffFilters>(EMPTY_STAFF_FILTERS)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
@@ -266,11 +274,13 @@ function StaffPage() {
     setToast(approve ? 'Leave approved' : 'Leave rejected')
   }
 
-  // POST /users creates the account and emails the generated password. The
-  // details the API doesn't store yet are kept for this session (see `pending`)
+  // POST /users creates the account, with its employment details, and emails
+  // the generated password when login is allowed
   async function handleCreate(input: NewStaffInput) {
     const username = input.username.trim().toLowerCase()
     const name = `${input.firstName} ${input.lastName}`.trim()
+    const amount = (value: string) => (value.trim() === '' ? undefined : Number(value))
+    const certification = input.certificationName.trim()
     try {
       await createUser({
         username,
@@ -283,28 +293,37 @@ function StaffPage() {
         userType: input.userType,
         ...(input.branchUuid ? { branch: input.branchUuid } : {}),
         ...(input.roleId !== null ? { role: input.roleId } : {}),
+        ...(input.emergencyContact.trim() ? { emergencyContact: input.emergencyContact.trim() } : {}),
+        jobTitle: input.jobTitle.trim(),
+        department: DEPARTMENT_CODES[input.department],
+        employmentType: EMPLOYMENT_CODES[input.employment],
+        ...(input.hiredAt ? { hiredAt: input.hiredAt } : {}),
+        ...(input.managerId ? { managerId: input.managerId } : {}),
+        loginAccess: input.loginAccess,
+        twoFactorRequired: input.twoFactor,
+        shiftStart: input.shiftStart,
+        shiftEnd: input.shiftEnd,
+        workingDays: input.workingDays,
+        skills: input.skills.flatMap(({ name: skill, level }) =>
+          SKILL_CODES[skill] ? [{ skill: SKILL_CODES[skill], level: SKILL_LEVEL_CODES[level] }] : [],
+        ),
+        ...(amount(input.monthlySalary) !== undefined ? { monthlySalary: amount(input.monthlySalary) } : {}),
+        ...(amount(input.leaveBalance) !== undefined ? { leaveBalance: amount(input.leaveBalance) } : {}),
+        ...(certification
+          ? { certification: { name: certification, expiresAt: input.certificationExpiresAt || null } }
+          : {}),
+        accountStatus: 'ACTIVE',
       }).unwrap()
     } catch {
       // `createError` drives the message in the wizard
       return
     }
-    setPending((current) => ({
-      ...current,
-      [username]: {
-        jobTitle: input.jobTitle.trim(),
-        department: input.department,
-        employment: input.employment,
-        emergencyContact: input.emergencyContact.trim() || 'Not provided',
-        twoFactor: input.twoFactor,
-        shiftStart: input.shiftStart,
-        shiftEnd: input.shiftEnd,
-        workingDays: input.workingDays,
-        skills: input.skills,
-        manager: actor,
-      },
-    }))
     setDialog(null)
-    setToast(`${name} added. Their sign-in details were emailed to ${input.email.trim()}.`)
+    setToast(
+      input.loginAccess
+        ? `${name} added. Their sign-in details were emailed to ${input.email.trim()}.`
+        : `${name} added without login access.`,
+    )
   }
 
   function handleDelete(id: string) {
@@ -332,15 +351,25 @@ function StaffPage() {
       body: 'Suspended staff lose system access and cannot be given new work until an administrator re-enables them. Their history is kept.',
       confirmLabel: 'Suspend',
       destructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
+        const results = await Promise.allSettled(
+          ids.map((id) =>
+            updateUser({ uuid: id, changes: { accountStatus: 'SUSPENDED', statusReason: `Suspended by ${actor}` } }).unwrap(),
+          ),
+        )
+        const saved = ids.filter((_, index) => results[index].status === 'fulfilled')
         updateStaff(
-          ids,
+          saved,
           (member) => ({ ...member, status: 'suspended', assignment: '', assignmentRef: '' }),
           `Account suspended by ${actor}`,
         )
         setSelectedIds([])
-        // TODO: UserRequest has no status field, so suspension isn't saved yet
-        setToast(`${ids.length} ${ids.length === 1 ? 'account' : 'accounts'} suspended for this session (not saved to the server yet)`)
+        const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+        setToast(
+          failed
+            ? `${saved.length} of ${ids.length} suspended. ${saveFailureMessage(failed.reason, 'The server refused the rest.')}`
+            : `${ids.length} ${ids.length === 1 ? 'account' : 'accounts'} suspended`,
+        )
       },
     })
   }
@@ -351,8 +380,13 @@ function StaffPage() {
       requestSuspend([id])
       return
     }
-    updateStaff([id], (current) => ({ ...current, status: 'offline' }), `Account re-enabled by ${actor}`)
-    setToast(`${member.name}’s account re-enabled`)
+    updateUser({ uuid: id, changes: { accountStatus: 'ACTIVE' } })
+      .unwrap()
+      .then(() => {
+        updateStaff([id], (current) => ({ ...current, status: 'offline' }), `Account re-enabled by ${actor}`)
+        setToast(`${member.name}’s account re-enabled`)
+      })
+      .catch((error: unknown) => setToast(saveFailureMessage(error, `${member.name}’s account wasn’t re-enabled.`)))
   }
 
   const exportStaff = (list: StaffMember[]) => {
@@ -618,6 +652,10 @@ function StaffPage() {
       {dialog?.name === 'add' && (
         <StaffWizard
           saving={creating}
+          managers={(users ?? [])
+            .filter((user) => user.active && user.staff.accountStatus !== 'SUSPENDED')
+            .map((user) => ({ id: user.uuid, name: `${user.firstName} ${user.lastName}`.trim() || user.username }))
+            .sort((a, b) => a.name.localeCompare(b.name))}
           error={createError ? saveFailureMessage(createError, 'The staff member wasn’t created.', 'The username or email is already in use.') : null}
           onClose={() => {
             resetCreate()
