@@ -19,12 +19,13 @@ import type { ConfirmRequest } from '../components/orders/OrderDialogs'
 import { iconButton, primaryButton, secondaryButton } from '../components/orders/styles'
 import Menu, { MenuItem } from '../components/ui/Menu'
 
-import useCurrentUser from '../hooks/useCurrentUser'
 import useBranches from '../hooks/useBranches'
 import useMachinePermissions from '../hooks/useMachinePermissions'
-import { machineStore, useMachineList } from '../hooks/useMachines'
+import useMachineActions from '../hooks/useMachineActions'
+import { useMachineDetail, useMachineList } from '../hooks/useMachines'
+import { describeError } from '../utils/apiReasons'
 import useNow from '../hooks/useNow'
-import { formatRuntime, getMaintenance, getOpenFault, isOperational, withActivity } from '../utils/machines'
+import { formatRuntime, getMaintenance, getOpenFault, isOperational } from '../utils/machines'
 import { formatDay } from '../utils/promotions'
 
 const TABS = [
@@ -44,8 +45,11 @@ function MachineDetailPage() {
   const now = useNow()
   const { machines, isLoading } = useMachineList()
   const branches = useBranches()
-  const me = useCurrentUser().name || 'You'
-  const machine = machines.find(({ id }) => id === machineId)
+  const actions = useMachineActions()
+  const listed = machines.find(({ id }) => id === machineId)
+  // The single read adds costs, logs, faults and transfers to what the list has
+  const { machine: detailed } = useMachineDetail(listed?.uuid ?? '')
+  const machine = detailed ?? listed
   const [dialog, setDialog] = useState<MachineDialogState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -90,15 +94,19 @@ function MachineDetailPage() {
   const maintenance = getMaintenance(machine, now)
   const open = (name: Exclude<MachineDialogState['name'], 'add' | 'compare'>) => setDialog({ name, machineId: machine.id })
 
-  const change: MachineTabProps['onChange'] = (apply, message) => {
-    machineStore.update(machine.id, apply)
-    setToast(message)
+  const run: MachineTabProps['run'] = async (call, message) => {
+    try {
+      await call()
+      setToast(message)
+    } catch (error) {
+      setToast(describeError(error, 'The server refused this change.'))
+    }
   }
 
   function toggleOffline() {
     const offline = machine!.status === 'offline'
-    change(
-      (current) => withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, me, offline ? 'Marked available' : 'Marked unavailable'),
+    run(
+      () => actions.setStatus(machine!.uuid, offline ? 'AVAILABLE' : 'OFFLINE', offline ? '' : 'Marked unavailable'),
       `${machine!.name} marked ${offline ? 'available' : 'unavailable'}`,
     )
   }
@@ -109,7 +117,8 @@ function MachineDetailPage() {
     now,
     permissions,
     branchName,
-    onChange: change,
+    actions,
+    run,
     onDialog: open,
     onConfirm: setConfirm,
   }

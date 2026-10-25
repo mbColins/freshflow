@@ -18,6 +18,8 @@ export type MachineType =
   | 'Other'
 
 export type MachineJob = {
+  // The server's id for the job
+  uuid: string
   orderId: string
   customer: string
   service: string
@@ -29,9 +31,12 @@ export type MachineJob = {
   operator: string
   temperature: number | null
   paused: boolean
+  // The expected time has passed: the cycle can be completed
+  readyToComplete: boolean
 }
 
 export type QueuedJob = {
+  uuid: string
   orderId: string
   service: string
   loadKg: number

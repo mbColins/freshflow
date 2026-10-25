@@ -1,3 +1,4 @@
+import PriceConfigsPanel from '../components/pricing/PriceConfigsPanel'
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
@@ -490,6 +491,8 @@ function PricingPage() {
             <HealthPanel health={health} onReview={(serviceId) => navigate(`/services/${serviceId}`)} />
             <CampaignsPanel promotions={SAMPLE_PROMOTIONS} now={now} />
           </div>
+
+          <PriceConfigsPanel canManage={permissions.manage} onToast={setToast} />
         </>
       )}
 

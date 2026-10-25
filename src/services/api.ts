@@ -121,6 +121,7 @@ export const api = createApi({
     'TenantConfig',
     'Domain',
     'AppConfig',
+    'Audit',
     'Tenant',
     'User',
   ],

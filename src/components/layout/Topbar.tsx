@@ -1,16 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
-import { CalendarDays, Menu, Plus, Search, Store } from 'lucide-react'
+import { Menu, Plus, Search, Store } from 'lucide-react'
 import useCurrentUser from '../../hooks/useCurrentUser'
 import NotificationBell from './NotificationBell'
 
-const BRANCHES = ['Downtown Branch', 'Akwa Branch', 'Bonapriso Branch']
-const DATE_RANGES = ['Today', 'Yesterday', 'Last 7 days', 'This month']
-
-const selectClass =
-  'h-9 cursor-pointer appearance-none rounded-md bg-field pr-3 pl-8 text-xs font-semibold text-ink outline-none transition focus:ring-2 focus:ring-brand'
-const selectIconClass =
-  'pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted'
 
 type TopbarProps = {
   onOpenMenu: () => void
@@ -60,22 +53,15 @@ function Topbar({ onOpenMenu }: TopbarProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="relative hidden md:block">
-          <Store className={selectIconClass} aria-hidden="true" />
-          <select aria-label="Branch" className={selectClass}>
-            {BRANCHES.map((branch) => (
-              <option key={branch}>{branch}</option>
-            ))}
-          </select>
-        </div>
-        <div className="relative hidden md:block">
-          <CalendarDays className={selectIconClass} aria-hidden="true" />
-          <select aria-label="Date range" className={selectClass}>
-            {DATE_RANGES.map((range) => (
-              <option key={range}>{range}</option>
-            ))}
-          </select>
-        </div>
+        {me.workplace && (
+          <p
+            title="Where you work"
+            className="hidden h-9 max-w-48 items-center gap-2 rounded-md bg-field px-3 text-xs font-semibold text-ink md:flex"
+          >
+            <Store className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
+            <span className="truncate">{me.workplace}</span>
+          </p>
+        )}
 
         <Link
           to="/orders?new=1"

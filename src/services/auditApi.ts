@@ -101,6 +101,7 @@ export const auditApi = api.injectEndpoints({
           totalPages: response.content?.totalPages ?? 1,
         }
       },
+      providesTags: [{ type: 'Audit', id: 'LIST' }],
     }),
   }),
 })

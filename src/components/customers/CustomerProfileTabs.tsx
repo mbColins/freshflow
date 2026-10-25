@@ -25,7 +25,7 @@ import {
 } from '../../constants/customers'
 import type { CustomerPermissions } from '../../constants/customers'
 import { MESSAGE_TEMPLATES } from '../../constants/orders'
-import { getSampleOrders } from '../../constants/sampleOrders'
+import useCustomerOrders from '../../hooks/useCustomerOrders'
 import type { Address, Consent, CrmCustomer } from '../../types/customer'
 import type { FulfilmentMethod } from '../../types/order'
 import {
@@ -138,8 +138,8 @@ function RecentOrders({
   query?: string
 }) {
   const needle = query.trim().toLowerCase().replace(/^#/, '')
-  const orders = getSampleOrders(customer.phone)
-    .filter(
+  const orders = useCustomerOrders(customer.id)
+    .orders.filter(
       (order) =>
         !needle ||
         order.id.toLowerCase().includes(needle) ||
@@ -213,6 +213,7 @@ export function OverviewTab({
   onRecordPayment,
   onAddNote,
 }: TabProps) {
+  const orderCount = useCustomerOrders(customer.id).orders.length
   const health = getHealth(customer, now)
   const insights = getInsights(customer, now, permissions.financials)
   const tenureDays = daysSince(customer.registeredAt, now) ?? 0
@@ -243,7 +244,7 @@ export function OverviewTab({
             </span>
           }
         >
-          {getSampleOrders(customer.phone).length === 0 ? (
+          {orderCount === 0 ? (
             <PanelEmpty>No recent orders to show.</PanelEmpty>
           ) : (
             <RecentOrders
@@ -393,7 +394,8 @@ export function OverviewTab({
 
 export function OrdersTab({ customer, now, permissions, canCreateOrder }: TabProps) {
   const [query, setQuery] = useState('')
-  const sampleCount = getSampleOrders(customer.phone).length
+  const { orders: customerOrders, isLoading: ordersLoading } = useCustomerOrders(customer.id)
+  const sampleCount = customerOrders.length
 
   return (
     <Panel
@@ -417,13 +419,16 @@ export function OrdersTab({ customer, now, permissions, canCreateOrder }: TabPro
         )
       }
     >
-      {sampleCount === 0 ? (
+      {ordersLoading ? (
+        <div className="space-y-2" aria-busy="true">
+          <p className="sr-only" role="status">Loading orders…</p>
+          {[0, 1, 2].map((key) => (
+            <div key={key} className="h-9 animate-pulse rounded-md bg-field" />
+          ))}
+        </div>
+      ) : sampleCount === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-lg bg-field px-3 py-8 text-center">
-          <p className="text-xs text-muted">
-            {customer.orders === 0
-              ? 'This customer has not placed any orders yet.'
-              : 'No order records are available for this customer in the sample data.'}
-          </p>
+          <p className="text-xs text-muted">This customer has not placed any orders yet.</p>
           {canCreateOrder && (
             <Link
               to={`/orders?new=1&customer=${customer.id}`}
@@ -443,8 +448,7 @@ export function OrdersTab({ customer, now, permissions, canCreateOrder }: TabPro
             query={query}
           />
           <p className="mt-3 text-[11px] text-muted">
-            Showing the {sampleCount} sample {sampleCount === 1 ? 'order' : 'orders'}{' '}
-            on file out of {customer.orders} recorded for this customer.
+            {sampleCount} {sampleCount === 1 ? 'order' : 'orders'} on file for this customer.
           </p>
         </>
       )}

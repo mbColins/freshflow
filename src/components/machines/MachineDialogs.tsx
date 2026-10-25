@@ -12,7 +12,8 @@ import {
 } from '../../constants/machines'
 import type { MachinePermissions } from '../../constants/machines'
 import useCurrentUser from '../../hooks/useCurrentUser'
-import useMachines, { machineStore } from '../../hooks/useMachines'
+import useMachineActions from '../../hooks/useMachineActions'
+import useMachines from '../../hooks/useMachines'
 import useNow from '../../hooks/useNow'
 import { useCreateMachineMutation, useUpdateMachineMutation } from '../../services/machineApi'
 import type { Machine, MachineProfile } from '../../types/machine'
@@ -20,16 +21,12 @@ import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../../utils/
 import { toMachineRequest } from '../../utils/machineMapping'
 import {
   COMPARE_MACHINE_METRICS,
-  assignJob,
   emptyProfile,
   formatRuntime,
   getTypeForService,
   nextMachineId,
   recommendMachines,
-  reportFault,
-  scheduleMaintenance,
   toProfile,
-  withActivity,
 } from '../../utils/machines'
 import type { FaultInput, JobInput, MaintenanceInput } from '../../utils/machines'
 import { formatDay, toDateKey } from '../../utils/promotions'
@@ -559,7 +556,7 @@ export function MachineDialogHost({
 }) {
   const machines = useMachines()
   const now = useNow()
-  const me = useCurrentUser().name || 'You'
+  const actions = useMachineActions()
   const [createMachine] = useCreateMachineMutation()
   const [updateMachine] = useUpdateMachineMutation()
   if (!dialog) return null
@@ -595,7 +592,15 @@ export function MachineDialogHost({
 
   const machine = machines.find(({ id }) => id === dialog.machineId)
   if (!machine) return null
-  const update = (change: (current: Machine) => Machine) => machineStore.update(machine.id, change)
+  // Runs a call on the server; the dialog closes only when it was accepted
+  const attempt = async (call: () => Promise<unknown>, message: string, fallback: string) => {
+    try {
+      await call()
+      done(message)
+    } catch (error) {
+      onToast(failure(error, fallback))
+    }
+  }
 
   switch (dialog.name) {
     case 'edit':
@@ -609,7 +614,6 @@ export function MachineDialogHost({
           onSave={async (profile) => {
             try {
               await updateMachine({ id: machine.uuid, changes: toMachineRequest(profile, false) }).unwrap()
-              update((current) => withActivity(current, me, 'Machine details edited'))
               done(`${profile.name} updated`)
             } catch (error) {
               onToast(failure(error, `Couldn’t update ${profile.name}.`))
@@ -622,10 +626,20 @@ export function MachineDialogHost({
         <FaultDialog
           machine={machine}
           onClose={onClose}
-          onSubmit={(input) => {
-            update((current) => reportFault(current, input, me))
-            done(input.severity === 'Critical' || input.severity === 'High' ? `${machine.name} taken out of service` : `Fault logged for ${machine.name}`)
-          }}
+          onSubmit={(input) =>
+            void attempt(
+              () =>
+                actions.reportFault(machine.uuid, {
+                  type: input.type,
+                  severity: input.severity.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL',
+                  description: input.description,
+                  technician: input.technician || undefined,
+                  downtimeMin: input.downtimeMin,
+                }),
+              input.severity === 'Critical' || input.severity === 'High' ? `${machine.name} taken out of service` : `Fault logged for ${machine.name}`,
+              'The fault wasn’t reported.',
+            )
+          }
         />
       )
     case 'maintenance':
@@ -634,10 +648,13 @@ export function MachineDialogHost({
           machine={machine}
           now={now}
           onClose={onClose}
-          onSubmit={(input) => {
-            update((current) => scheduleMaintenance(current, input, me))
-            done(`${input.type} scheduled for ${machine.name} on ${formatDay(input.date, true)}`)
-          }}
+          onSubmit={(input) =>
+            void attempt(
+              () => actions.scheduleMaintenance(machine.uuid, input),
+              `${input.type} scheduled for ${machine.name} on ${formatDay(input.date, true)}`,
+              'The maintenance wasn’t scheduled.',
+            )
+          }
         />
       )
     case 'assign':
@@ -648,9 +665,19 @@ export function MachineDialogHost({
           branchName={branchName}
           onClose={onClose}
           onSubmit={(machineId, input) => {
-            const target = machines.find(({ id }) => id === machineId)!
-            machineStore.update(machineId, (current) => assignJob(current, input, me))
-            done(target.job ? `${input.orderId} queued on ${target.name}` : `${input.orderId} started on ${target.name}`)
+            const target = machines.find(({ id }) => id === machineId)
+            if (!target) return
+            void attempt(
+              () =>
+                actions.assignJob(target.uuid, {
+                  order: input.orderId,
+                  service: input.service,
+                  loadKg: input.loadKg,
+                  priority: input.priority === 'High' ? 'HIGH' : 'NORMAL',
+                }),
+              target.job ? `${input.orderId} queued on ${target.name}` : `${input.orderId} started on ${target.name}`,
+              'The job wasn’t assigned.',
+            )
           }}
         />
       )
@@ -661,22 +688,13 @@ export function MachineDialogHost({
           branches={branches}
           now={now}
           onClose={onClose}
-          onSubmit={async (branchId, reason) => {
-            try {
-              // The move itself is stored; the reason and history stay on this page
-              await updateMachine({ id: machine.uuid, changes: { branch: branchId } }).unwrap()
-              update((current) =>
-                withActivity(
-                  { ...current, transfers: [{ at: new Date().toISOString(), from: machine.branchId, to: branchId, reason, by: me }, ...current.transfers] },
-                  me,
-                  `Transferred from ${branchName(machine.branchId)} to ${branchName(branchId)}`,
-                ),
-              )
-              done(`${machine.name} transferred to ${branchName(branchId)}`)
-            } catch (error) {
-              onToast(failure(error, `Couldn’t transfer ${machine.name}.`))
-            }
-          }}
+          onSubmit={(branchId, reason) =>
+            void attempt(
+              () => actions.transfer(machine.uuid, branchId, reason),
+              `${machine.name} transferred to ${branchName(branchId)}`,
+              'The machine wasn’t transferred.',
+            )
+          }
         />
       )
     case 'retire':
@@ -684,16 +702,9 @@ export function MachineDialogHost({
         <RetireDialog
           machine={machine}
           onClose={onClose}
-          onSubmit={(reason, condition) => {
-            update((current) =>
-              withActivity(
-                { ...current, status: 'retired', statusNote: `Retired: ${reason} (final condition: ${condition.toLowerCase()})`, queue: [] },
-                me,
-                `Machine retired at ${current.totalCycles.toLocaleString('en-US')} cycles: ${reason}`,
-              ),
-            )
-            done(`${machine.name} retired`)
-          }}
+          onSubmit={(reason, condition) =>
+            void attempt(() => actions.retire(machine.uuid, reason, condition), `${machine.name} retired`, 'The machine wasn’t retired.')
+          }
         />
       )
   }

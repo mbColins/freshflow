@@ -239,92 +239,11 @@ export function recommendMachines(machines: Machine[], type: MachineType, loadKg
 
 // ---------- Changes ----------
 
-export function withActivity(machine: Machine, by: string, text: string, orderId?: string): Machine {
-  return { ...machine, activity: [{ at: new Date().toISOString(), text, by, ...(orderId ? { orderId } : {}) }, ...machine.activity] }
-}
-
 export type FaultInput = Pick<MachineFault, 'type' | 'severity' | 'description' | 'technician' | 'downtimeMin'>
-
-export function reportFault(machine: Machine, input: FaultInput, by: string): Machine {
-  // Low and medium faults are logged without stopping the machine
-  const stop = input.severity === 'Critical' || input.severity === 'High'
-  const fault: MachineFault = { id: `${machine.id}-F-${Date.now().toString(36)}`, ...input, reportedAt: new Date().toISOString(), reportedBy: by, status: input.technician ? 'In Progress' : 'Open', resolution: '' }
-  return withActivity(
-    { ...machine, faults: [fault, ...machine.faults], ...(stop ? { status: 'fault' as const, statusNote: input.description, job: null } : {}) },
-    by,
-    `Fault reported: ${input.type} (${input.severity})`,
-    machine.job?.orderId,
-  )
-}
-
-export function resolveFault(machine: Machine, faultId: string, resolution: string, by: string): Machine {
-  const faults = machine.faults.map((fault) => (fault.id === faultId ? { ...fault, status: 'Resolved' as const, resolution } : fault))
-  const clear = machine.status === 'fault' && !faults.some(({ status }) => status !== 'Resolved')
-  return withActivity(
-    { ...machine, faults, ...(clear ? { status: 'available' as const, statusNote: '' } : {}) },
-    by,
-    `Fault resolved: ${resolution}`,
-  )
-}
 
 export type MaintenanceInput = Pick<MaintenanceEntry, 'date' | 'time' | 'type' | 'technician' | 'durationMin' | 'cost' | 'description'>
 
-export function scheduleMaintenance(machine: Machine, input: MaintenanceInput, by: string): Machine {
-  const entry: MaintenanceEntry = { id: `${machine.id}-MT-${Date.now().toString(36)}`, ...input, status: 'Scheduled' }
-  const pending = [entry, ...machine.maintenanceLog].filter(({ status }) => status === 'Scheduled' || status === 'Overdue')
-  return withActivity(
-    {
-      ...machine,
-      maintenanceLog: [entry, ...machine.maintenanceLog],
-      technician: input.technician,
-      nextMaintenanceAt: pending.map(({ date }) => date).sort()[0],
-    },
-    by,
-    `Scheduled ${input.type.toLowerCase()} for ${input.date}`,
-  )
-}
-
-// Marks a maintenance entry done and plans the next one from the machine's frequency
-export function completeMaintenance(machine: Machine, entryId: string, by: string, now: number): Machine {
-  const today = toDateKey(now)
-  const log = machine.maintenanceLog.map((entry) => (entry.id === entryId ? { ...entry, status: 'Completed' as const, date: today } : entry))
-  const pending = log.filter(({ status }) => status === 'Scheduled' || status === 'Overdue')
-  const entry = machine.maintenanceLog.find(({ id }) => id === entryId)!
-  return withActivity(
-    {
-      ...machine,
-      maintenanceLog: log,
-      lastMaintenanceAt: today,
-      nextMaintenanceAt: pending.map(({ date }) => date).sort()[0] ?? toDateKey(now + machine.maintenanceEveryDays * DAY_MS),
-      costs: { ...machine.costs, maintenance: machine.costs.maintenance + entry.cost },
-      ...(machine.status === 'maintenance' ? { status: 'available' as const, statusNote: '' } : {}),
-    },
-    by,
-    `${entry.type} completed`,
-  )
-}
-
 export type JobInput = Pick<MachineJob, 'orderId' | 'customer' | 'service' | 'loadKg'> & { priority: QueuedJob['priority'] }
-
-// Starts the job on a free machine, or adds it to the queue of a busy one
-export function assignJob(machine: Machine, input: JobInput, by: string): Machine {
-  const meta = getMachineType(machine.type)
-  if (machine.job) {
-    const queued: QueuedJob = { orderId: input.orderId, service: input.service, loadKg: input.loadKg, durationMin: machine.specs.cycleMin, priority: input.priority }
-    const queue = input.priority === 'High' ? [queued, ...machine.queue] : [...machine.queue, queued]
-    return withActivity({ ...machine, queue }, by, `Order queued (${input.priority.toLowerCase()} priority)`, input.orderId)
-  }
-  return withActivity(
-    {
-      ...machine,
-      status: 'running',
-      job: { orderId: input.orderId, customer: input.customer, service: input.service, loadKg: input.loadKg, cycle: 'Standard cycle', progress: 0, remainingMin: machine.specs.cycleMin, operator: by, temperature: meta.heated ? Math.round(machine.specs.maxTemp * 0.5) : null, paused: false },
-    },
-    by,
-    'Order assigned and cycle started',
-    input.orderId,
-  )
-}
 
 // ---------- Creating ----------
 

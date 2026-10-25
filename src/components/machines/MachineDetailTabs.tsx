@@ -4,19 +4,16 @@ import { Link } from 'react-router'
 import { ArrowDown, ArrowUp, CircleStop, Copy, Pause, Play, Plus, TriangleAlert, X } from 'lucide-react'
 import { TIME_SERIES, UTILIZATION_RANGES } from '../../constants/machines'
 import type { MachinePermissions } from '../../constants/machines'
-import { CURRENT_USER } from '../../constants/orders'
+import type useMachineActions from '../../hooks/useMachineActions'
 import type { Machine, MaintenanceStatus, UtilizationRange } from '../../types/machine'
 import { formatDate } from '../../utils/customers'
 import {
-  completeMaintenance,
   formatRuntime,
   getCostSummary,
   getEnergyDelta,
   getMaintenance,
   getUtilizationSeries,
   isOperational,
-  resolveFault,
-  withActivity,
 } from '../../utils/machines'
 import { formatTime, formatXaf } from '../../utils/orders'
 import { formatDay } from '../../utils/promotions'
@@ -38,8 +35,10 @@ export type MachineTabProps = {
   now: number
   permissions: MachinePermissions
   branchName: (id: string) => string
-  // Applies a change to the machine and shows the message as a toast
-  onChange: (change: (machine: Machine) => Machine, message: string) => void
+  // The machine's runtime calls (status, jobs, queue, faults, maintenance)
+  actions: ReturnType<typeof useMachineActions>
+  // Runs a call on the server and shows the message as a toast once it was accepted
+  run: (call: () => Promise<unknown>, message: string) => void
   onDialog: (name: MachineDialogName) => void
   onConfirm: (request: ConfirmRequest) => void
 }
@@ -131,16 +130,15 @@ function UtilizationChart({ machine, now }: { machine: Machine; now: number }) {
 
 // ---------- Overview ----------
 
-export function OverviewTab({ machine, now, permissions, onChange, onDialog, onConfirm }: MachineTabProps) {
+export function OverviewTab({ machine, now, permissions, actions, run, onDialog, onConfirm }: MachineTabProps) {
   const { job, queue } = machine
   const planned = machine.cyclesToday + (job ? 1 : 0) + queue.length
-  const move = (index: number, offset: number) =>
-    onChange((current) => {
-      const next = [...current.queue]
-      const [item] = next.splice(index, 1)
-      next.splice(index + offset, 0, item)
-      return { ...current, queue: next }
-    }, 'Queue reordered')
+  const move = (index: number, offset: number) => {
+    const next = [...queue]
+    const [item] = next.splice(index, 1)
+    next.splice(index + offset, 0, item)
+    run(() => actions.reorderQueue(machine.uuid, next.map(({ uuid }) => uuid)), 'Queue reordered')
+  }
 
   return (
     <div className="space-y-4">
@@ -195,8 +193,8 @@ export function OverviewTab({ machine, now, permissions, onChange, onDialog, onC
                           body: job.paused ? `The cycle for order #${job.orderId} continues from ${job.progress}%.` : `The cycle for order #${job.orderId} holds at ${job.progress}%. The load stays in the machine.`,
                           confirmLabel: job.paused ? 'Resume' : 'Pause',
                           onConfirm: () =>
-                            onChange(
-                              (current) => withActivity({ ...current, job: current.job && { ...current.job, paused: !current.job.paused } }, CURRENT_USER, job.paused ? 'Cycle resumed' : 'Cycle paused', job.orderId),
+                            run(
+                              () => (job.paused ? actions.resume(machine.uuid) : actions.pause(machine.uuid)),
                               job.paused ? `${machine.name} resumed` : `${machine.name} paused`,
                             ),
                         })
@@ -206,6 +204,15 @@ export function OverviewTab({ machine, now, permissions, onChange, onDialog, onC
                       {job.paused ? <Play className="size-4 text-success" aria-hidden="true" /> : <Pause className="size-4 text-muted" aria-hidden="true" />}
                       {job.paused ? 'Resume Machine' : 'Pause Machine'}
                     </button>
+                    {job.readyToComplete && (
+                      <button
+                        type="button"
+                        onClick={() => run(() => actions.complete(machine.uuid), `Cycle completed on ${machine.name}`)}
+                        className={primaryButton}
+                      >
+                        Complete Cycle
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() =>
@@ -215,9 +222,9 @@ export function OverviewTab({ machine, now, permissions, onChange, onDialog, onC
                           confirmLabel: 'Stop Machine',
                           destructive: true,
                           onConfirm: () =>
-                            onChange(
-                              (current) => withActivity({ ...current, job: null, status: 'available' }, CURRENT_USER, `Cycle stopped at ${job.progress}%`, job.orderId),
-                              `${machine.name} stopped. Order #${job.orderId} needs reassigning`,
+                            run(
+                              () => actions.stop(machine.uuid, `Stopped at ${job.progress}% from the machine page`),
+                              `${machine.name} stopped. Order #${job.orderId} goes back to waiting`,
                             ),
                         })
                       }
@@ -283,7 +290,7 @@ export function OverviewTab({ machine, now, permissions, onChange, onDialog, onC
                         <button
                           type="button"
                           aria-label={`Remove ${item.orderId} from the queue`}
-                          onClick={() => onChange((current) => ({ ...current, queue: current.queue.filter((_, position) => position !== index) }), `${item.orderId} removed from the queue`)}
+                          onClick={() => run(() => actions.removeQueued(machine.uuid, item.uuid), `${item.orderId} removed from the queue`)}
                           className={`${iconButton} size-7`}
                         >
                           <X className="size-3.5" aria-hidden="true" />
@@ -328,7 +335,7 @@ const MAINTENANCE_TONES: Record<MaintenanceStatus, BadgeTone> = {
   Cancelled: 'neutral',
 }
 
-export function MaintenanceTab({ machine, now, permissions, onChange, onDialog }: MachineTabProps) {
+export function MaintenanceTab({ machine, now, permissions, actions, run, onDialog }: MachineTabProps) {
   const log = [...machine.maintenanceLog].sort((a, b) => b.date.localeCompare(a.date))
   return (
     <div className="space-y-4">
@@ -390,18 +397,18 @@ export function MaintenanceTab({ machine, now, permissions, onChange, onDialog }
                         <td className="py-2 text-right whitespace-nowrap">
                           {open && (
                             <span className="inline-flex gap-1.5">
-                              <button type="button" onClick={() => onChange((current) => completeMaintenance(current, entry.id, CURRENT_USER, now), `${entry.type} marked completed`)} className={`${secondaryButton} h-7`}>
+                              {entry.status !== 'In Progress' && (
+                                <button type="button" onClick={() => run(() => actions.startMaintenance(machine.uuid, entry.id), `${entry.type} started`)} className={`${secondaryButton} h-7`}>
+                                  Start
+                                </button>
+                              )}
+                              <button type="button" onClick={() => run(() => actions.completeMaintenance(machine.uuid, entry.id), `${entry.type} marked completed`)} className={`${secondaryButton} h-7`}>
                                 Mark completed
                               </button>
                               {entry.status !== 'In Progress' && (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    onChange(
-                                      (current) => withActivity({ ...current, maintenanceLog: current.maintenanceLog.map((item) => (item.id === entry.id ? { ...item, status: 'Cancelled' } : item)) }, CURRENT_USER, `${entry.type} cancelled`),
-                                      `${entry.type} cancelled`,
-                                    )
-                                  }
+                                  onClick={() => run(() => actions.cancelMaintenance(machine.uuid, entry.id), `${entry.type} cancelled`)}
                                   className={`${secondaryButton} h-7 text-danger`}
                                 >
                                   Cancel
@@ -437,7 +444,7 @@ function ResolveFaultForm({ onSave, onCancel }: { onSave: (text: string) => void
   )
 }
 
-export function FaultsTab({ machine, permissions, onChange, onDialog }: MachineTabProps) {
+export function FaultsTab({ machine, permissions, actions, run, onDialog }: MachineTabProps) {
   const [resolvingId, setResolvingId] = useState<string | null>(null)
   return (
     <Panel
@@ -476,7 +483,7 @@ export function FaultsTab({ machine, permissions, onChange, onDialog }: MachineT
                     <ResolveFaultForm
                       onCancel={() => setResolvingId(null)}
                       onSave={(text) => {
-                        onChange((current) => resolveFault(current, fault.id, text, CURRENT_USER), `${fault.type} resolved`)
+                        run(() => actions.resolveFault(machine.uuid, fault.id, text), `${fault.type} resolved`)
                         setResolvingId(null)
                       }}
                     />

@@ -38,7 +38,6 @@ import {
 } from '../constants/customers'
 import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
 import type { PreviewState } from '../constants/orders'
-import { getSampleOrders } from '../constants/sampleOrders'
 import { useBranchLookup, useChangeCustomers, useCustomersQuery } from '../hooks/useCustomers'
 import { useCreateCustomerMutation, useDeleteCustomerMutation } from '../services/customerApi'
 import useLocalStorage from '../hooks/useLocalStorage'
@@ -118,7 +117,8 @@ function CustomersPage() {
         customer,
         filters,
         now,
-        getSampleOrders(customer.phone).map(({ id }) => id),
+        // Orders aren't loaded per customer in the list
+        [],
       ),
     )
     .sort(

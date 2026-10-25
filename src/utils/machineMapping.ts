@@ -1,5 +1,13 @@
 import type { MachineKind, MachineRequest, ServerMachine } from '../services/machineApi'
-import type { Machine, MachineProfile, MachineSpecs, MachineType } from '../types/machine'
+import type {
+  Machine,
+  MachineFault,
+  MachineProfile,
+  MachineSpecs,
+  MachineStatus,
+  MachineType,
+  MaintenanceEntry,
+} from '../types/machine'
 import { createMachine, emptyProfile } from './machines'
 
 // The server knows five kinds of machine and the app eight, so the app's own
@@ -32,8 +40,24 @@ const spec = (specs: Record<string, unknown>, key: keyof MachineSpecs) => {
   return Number.isFinite(value) && specs[key] !== '' && specs[key] !== null ? value : (DEFAULT_SPECS[key] as number)
 }
 
-// The stored profile as the app's machine. The server keeps no runtime state
-// (status, job, queue, counters, maintenance, faults), so those start neutral
+const num = (value: unknown) => {
+  const amount = typeof value === 'string' ? Number(value) : value
+  return typeof amount === 'number' && Number.isFinite(amount) ? amount : 0
+}
+
+// "IN_PROGRESS" -> "In Progress"
+const title = (value: string | null | undefined) =>
+  (value ?? '')
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+
+const STATUSES: MachineStatus[] = ['running', 'available', 'idle', 'maintenance', 'fault', 'offline', 'retired']
+
+// The stored machine as the app's machine, with what the server says it is
+// doing. The list leaves out costs, logs and transfers, which the single read has
 export function toMachine(server: ServerMachine): Machine {
   const storedType = server.specs.machineType
   const type: MachineType =
@@ -69,8 +93,94 @@ export function toMachine(server: ServerMachine): Machine {
     purchaseCost: server.purchaseCost ?? 0,
     maintenanceEveryDays: server.maintenanceEveryDays ?? 30,
   }
+  const run = server.runtime
   const created = server.createdAt ? new Date(server.createdAt).getTime() : Date.now()
-  return { ...createMachine(profile, server.createdBy, created), activity: [] }
+  const base = createMachine(profile, server.createdBy, created)
+  const status = STATUSES.find((value) => value === run.status?.toLowerCase()) ?? 'available'
+  const metrics = run.metrics
+  const job = run.job
+  return {
+    ...base,
+    status,
+    statusNote: run.statusNote ?? '',
+    technician: run.technician ?? '',
+    lastMaintenanceAt: run.lastMaintenanceAt ?? '',
+    nextMaintenanceAt: run.nextMaintenanceAt ?? base.nextMaintenanceAt,
+    totalCycles: run.totalCycles ?? 0,
+    job: job
+      ? {
+          uuid: job.uuid ?? '',
+          orderId: job.order ?? '',
+          customer: job.customer ?? '',
+          service: job.service ?? '',
+          loadKg: num(job.loadKg),
+          cycle: job.cycle ?? '',
+          progress: job.progress ?? 0,
+          remainingMin: job.remainingMin ?? 0,
+          operator: job.operator ?? '',
+          temperature: job.temperature ?? null,
+          paused: job.paused === true,
+          readyToComplete: job.readyToComplete === true,
+        }
+      : null,
+    queue: (run.queue ?? []).map((item) => ({
+      uuid: item.uuid ?? '',
+      orderId: item.order ?? '',
+      service: item.service ?? '',
+      loadKg: num(item.loadKg),
+      durationMin: item.durationMin ?? 0,
+      priority: item.priority?.toUpperCase() === 'HIGH' ? ('High' as const) : ('Normal' as const),
+    })),
+    runtimeTodayMin: metrics?.runtimeTodayMin ?? 0,
+    cyclesToday: metrics?.cyclesToday ?? 0,
+    utilization: metrics?.utilization ?? 0,
+    availability: metrics?.availability ?? 100,
+    efficiency: metrics?.efficiency ?? 0,
+    downtimePct: metrics?.downtimePct ?? 0,
+    avgCycleMin: metrics?.avgCycleMin ?? profile.specs.cycleMin,
+    energyKwh: num(metrics?.energyKwh),
+    waterUsedL: num(metrics?.waterUsedL),
+    energyPerCycle: num(metrics?.energyPerCycle),
+    revenue: num(metrics?.revenue),
+    costs: {
+      maintenance: num(run.costs?.maintenance),
+      repairs: num(run.costs?.repairs),
+      operating: num(run.costs?.operating),
+      energy: num(run.costs?.energy),
+    },
+    maintenanceLog: (run.maintenanceLog ?? []).map((entry) => ({
+      id: entry.uuid ?? '',
+      date: entry.date ?? '',
+      time: (entry.time ?? '').slice(0, 5),
+      type: entry.type ?? '',
+      technician: entry.technician ?? '',
+      durationMin: entry.durationMin ?? 0,
+      cost: num(entry.cost),
+      description: entry.description ?? '',
+      status: (title(entry.status) || 'Scheduled') as MaintenanceEntry['status'],
+    })),
+    faults: (run.faults ?? []).map((fault) => ({
+      id: fault.uuid ?? '',
+      type: fault.type ?? '',
+      severity: (title(fault.severity) || 'Medium') as MachineFault['severity'],
+      reportedAt: fault.reportedAt ?? '',
+      reportedBy: fault.reportedBy ?? '',
+      description: fault.description ?? '',
+      technician: fault.technician ?? '',
+      downtimeMin: fault.downtimeMin ?? 0,
+      status: (title(fault.status) || 'Open') as MachineFault['status'],
+      resolution: fault.resolution ?? '',
+    })),
+    transfers: (run.transfers ?? []).map((entry) => ({
+      at: entry.at ?? '',
+      from: entry.from?.uuid ?? '',
+      to: entry.to?.uuid ?? '',
+      reason: entry.reason ?? '',
+      by: entry.by ?? '',
+    })),
+    // The activity comes from the audit trail, on the machine's page
+    activity: [],
+  }
 }
 
 // The request that stores a profile. `withBranch` is false for an edit: a

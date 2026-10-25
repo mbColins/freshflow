@@ -28,9 +28,9 @@ import { primaryButton, secondaryButton } from '../components/orders/styles'
 import { EMPTY_MACHINE_FILTERS } from '../constants/machines'
 import { buildMachineSeed } from '../constants/machineSeed'
 import useBranches from '../hooks/useBranches'
-import useCurrentUser from '../hooks/useCurrentUser'
 import useLocalStorage from '../hooks/useLocalStorage'
-import { machineStore, useMachineList } from '../hooks/useMachines'
+import useMachineActions from '../hooks/useMachineActions'
+import { useMachineList } from '../hooks/useMachines'
 import useMachinePermissions from '../hooks/useMachinePermissions'
 import useNow from '../hooks/useNow'
 import { useCreateMachineMutation } from '../services/machineApi'
@@ -42,7 +42,6 @@ import {
   getMachineAlerts,
   machinesToCsv,
   matchesMachineFilters,
-  withActivity,
 } from '../utils/machines'
 import type { MachineSortKey } from '../utils/machines'
 import { downloadFile } from '../utils/orders'
@@ -61,7 +60,7 @@ function MachinesPage() {
   const now = useNow()
   const { machines, isLoading, isError, isFetching, error: loadError, refetch } = useMachineList()
   const branches = useBranches()
-  const me = useCurrentUser().name || 'You'
+  const machineCalls = useMachineActions()
   const [createMachine] = useCreateMachineMutation()
   const [importing, setImporting] = useState(false)
   const [filters, setFilters] = useState<MachineFilters>(EMPTY_MACHINE_FILTERS)
@@ -108,13 +107,16 @@ function MachinesPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  function handleToggleOffline(machineId: string) {
-    const machine = machines.find(({ id }) => id === machineId)!
+  async function handleToggleOffline(machineId: string) {
+    const machine = machines.find(({ id }) => id === machineId)
+    if (!machine) return
     const offline = machine.status === 'offline'
-    machineStore.update(machineId, (current) =>
-      withActivity({ ...current, status: offline ? 'available' : 'offline', statusNote: offline ? '' : 'Marked unavailable' }, me, offline ? 'Marked available' : 'Marked unavailable'),
-    )
-    setToast(`${machine.name} marked ${offline ? 'available' : 'unavailable'}`)
+    try {
+      await machineCalls.setStatus(machine.uuid, offline ? 'AVAILABLE' : 'OFFLINE', offline ? '' : 'Marked unavailable')
+      setToast(`${machine.name} marked ${offline ? 'available' : 'unavailable'}`)
+    } catch (error) {
+      setToast(serverMessage(error) ?? errorMessage(error as Parameters<typeof errorMessage>[0], 'The status wasn’t changed.') ?? NETWORK_ERROR_MESSAGE)
+    }
   }
 
   // One-off: stores the demo fleet that used to be this page's mock data,
@@ -150,7 +152,7 @@ function MachinesPage() {
     now,
     branchName,
     onDialog: (name, machineId) => setDialog({ name, machineId }),
-    onToggleOffline: handleToggleOffline,
+    onToggleOffline: (id) => void handleToggleOffline(id),
   }
 
   return (
