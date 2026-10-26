@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarClock, ClipboardList, Clock, Download, RotateCcw, UserPlus } from 'lucide-react'
 import { ConfirmDialog } from '../components/orders/OrderDialogs'
 import type { ConfirmRequest } from '../components/orders/OrderDialogs'
-import { fieldClass, primaryButton, secondaryButton } from '../components/orders/styles'
+import { primaryButton, secondaryButton } from '../components/orders/styles'
 import {
   AssignWorkDialog,
   AttendanceDialog,
@@ -30,17 +30,29 @@ import {
   WorkforceInsights,
   WorkforceOverview,
 } from '../components/staff/StaffPanels'
-import { CURRENT_USER, ORDER_ROLES } from '../constants/orders'
 import {
+  ATTENDANCE_CODES,
   DEPARTMENT_CODES,
   EMPLOYMENT_CODES,
   EMPTY_STAFF_FILTERS,
+  LEAVE_CODES,
   SKILL_CODES,
   SKILL_LEVEL_CODES,
-  STAFF_PERMISSIONS,
+  TASK_TYPES,
 } from '../constants/staff'
+import type { StaffPermissions } from '../constants/staff'
 import useCurrentUser from '../hooks/useCurrentUser'
 import useLocalStorage from '../hooks/useLocalStorage'
+import {
+  useAssignTaskMutation,
+  useDecideLeaveMutation,
+  useFillShiftMutation,
+  useListLeaveQuery,
+  useListOpenShiftsQuery,
+  useRecordAttendanceMutation,
+  useRequestLeaveMutation,
+} from '../services/staffOpsApi'
+import { describeError } from '../utils/apiReasons'
 import useNow from '../hooks/useNow'
 import {
   useCreateUserMutation,
@@ -49,8 +61,7 @@ import {
   useListUsersQuery,
   useUpdateUserMutation,
 } from '../services/userApi'
-import type { OrderRole } from '../types/order'
-import type { LeaveRequest, OpenShift, StaffFilters, StaffMember } from '../types/staff'
+import type { StaffFilters, StaffMember } from '../types/staff'
 import { NETWORK_ERROR_MESSAGE, saveFailureMessage, serverMessage } from '../utils/apiErrors'
 import { downloadFile } from '../utils/orders'
 import { matchesStaffFilters, memberFromUser, staffToCsv } from '../utils/staff'
@@ -58,7 +69,7 @@ import { matchesStaffFilters, memberFromUser, staffToCsv } from '../utils/staff'
 const TOAST_MS = 4000
 // Platform admins (no tenant) read GET /users; one page is enough for now
 // TODO: page through the list once there are more users than this
-const ALL_USERS = { page: 0, size: 100 }
+const ALL_USERS = { page: 0, size: 100, include: 'daily' as const }
 
 type DialogState =
   | { name: 'assign' | 'attendance'; staffId: string }
@@ -69,44 +80,26 @@ function StaffPage() {
   const now = useNow()
   const me = useCurrentUser()
   // Who actions are stamped with
-  const actor = me.name || CURRENT_USER
+  const actor = me.name || 'You'
   // A tenant's staff come from GET /users/tenant. GET /users isn't limited to
   // one tenant, so it's only used for a platform admin, who has no tenant.
   const hasTenant = Boolean(me.user?.tenant)
-  const tenantUsers = useListTenantUsersQuery(undefined, { skip: !me.user || !hasTenant })
+  const tenantUsers = useListTenantUsersQuery({ daily: true }, { skip: !me.user || !hasTenant })
   const allUsers = useListUsersQuery(ALL_USERS, { skip: !me.user || hasTenant })
   const source = hasTenant ? tenantUsers : allUsers
   const users = hasTenant ? tenantUsers.data : allUsers.data?.items
   const loadingStaff = me.isLoading || source.isLoading
   const loadFailed = me.isError || source.isError
-  // Employment details come from the server. The API has no attendance, tasks
-  // or leave yet, so what's recorded for those is kept for this session only,
-  // laid over the server's users by uuid
-  // TODO: replace with the staff endpoints once the backend has them
-  const [overlay, setOverlay] = useState<Record<string, StaffMember>>({})
-  const staff = useMemo(
-    () =>
-      (users ?? []).map((user): StaffMember => {
-        const fromApi = memberFromUser(user)
-        const local = overlay[user.uuid] ?? fromApi
-        return {
-          ...local,
-          // The server owns the account details
-          id: fromApi.id,
-          username: fromApi.username,
-          name: fromApi.name,
-          phone: fromApi.phone,
-          email: fromApi.email,
-          hiredAt: fromApi.hiredAt,
-          lastLoginAt: fromApi.lastLoginAt,
-          // The server owns suspension too
-          status: fromApi.status === 'suspended' ? 'suspended' : local.status === 'suspended' ? 'offline' : local.status,
-        }
-      }),
-    [users, overlay],
-  )
-  const [leave, setLeave] = useState<LeaveRequest[]>([])
-  const [openShifts, setOpenShifts] = useState<OpenShift[]>([])
+  // Everything about a person comes from the server: their account, and today's
+  // state, workload and performance (include=daily)
+  const staff = useMemo(() => (users ?? []).map(memberFromUser), [users])
+  const { data: openShifts = [] } = useListOpenShiftsQuery()
+  const { data: leave = [] } = useListLeaveQuery()
+  const [recordAttendance] = useRecordAttendanceMutation()
+  const [assignTask] = useAssignTaskMutation()
+  const [fillShift] = useFillShiftMutation()
+  const [requestLeave] = useRequestLeaveMutation()
+  const [decideLeave] = useDecideLeaveMutation()
   const [createUser, { error: createError, isLoading: creating, reset: resetCreate }] = useCreateUserMutation()
   const [deleteUser] = useDeleteUserMutation()
   const [updateUser] = useUpdateUserMutation()
@@ -116,16 +109,20 @@ function StaffPage() {
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [role, setRole] = useLocalStorage<OrderRole>('staff.role', 'manager')
   const [view, setView] = useLocalStorage<StaffView>('staff.view', 'table')
   const searchRef = useRef<HTMLInputElement>(null)
   const directoryRef = useRef<HTMLDivElement>(null)
 
-  const permissions = STAFF_PERMISSIONS[role]
+  // From the role's permissions; everything is allowed until the profile says otherwise
+  const permissions: StaffPermissions = {
+    manage: me.can('STAFF:EDIT') || me.can('STAFF:CREATE'),
+    performance: me.can('STAFF:PERFORMANCE'),
+    payroll: me.user?.userType === 'TENANT' || me.isPlatformAdmin,
+  }
   const filtered = staff.filter((member) => matchesStaffFilters(member, filters, now))
   const filtersActive = Object.values(filters).some((value) => value !== '')
   const openMember = staff.find(({ id }) => id === openId) ?? null
-  const fillShift =
+  const shiftToFill =
     dialog?.name === 'fill' ? openShifts.find(({ id }) => id === dialog.shiftId) : undefined
 
   useEffect(() => {
@@ -160,118 +157,95 @@ function StaffPage() {
     directoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  // Changes staff records and stamps what happened on their activity timeline
-  function updateStaff(
-    ids: string[],
-    change: (member: StaffMember) => StaffMember,
-    event: string,
-  ) {
-    const at = new Date().toISOString()
-    const changed = staff.filter((member) => ids.includes(member.id))
-    setOverlay((current) => {
-      const next = { ...current }
-      for (const member of changed) {
-        next[member.id] = { ...change(member), activity: [{ at, text: event }, ...member.activity] }
+  const fail = (error: unknown, fallback: string) => setToast(describeError(error, fallback))
+
+  // Assigning work: the server checks the person is on duty, not on leave, and
+  // within their daily capacity. A manager can go past capacity on purpose
+  async function handleAssign(staffId: string, task: string, reference: string) {
+    const member = staff.find(({ id }) => id === staffId)
+    const type = TASK_TYPES.find(({ label }) => label === task)?.code
+    if (!member || !type) return
+    const send = (force: boolean) => assignTask({ user: staffId, type, ...(reference ? { reference } : {}), ...(force ? { force: true } : {}) }).unwrap()
+    try {
+      let warnings: string[]
+      try {
+        warnings = await send(false)
+      } catch (error) {
+        if (!permissions.manage || !describeError(error, '').includes('full day')) throw error
+        if (!window.confirm(`${member.name} already has a full day of work. Assign it anyway?`)) return
+        warnings = await send(true)
       }
-      return next
-    })
+      setDialog(null)
+      setToast(
+        `${member.name} assigned: ${task}${warnings.includes('skill_missing') ? '. They don’t have the skill listed for this work' : ''}`,
+      )
+    } catch (error) {
+      fail(error, `${member.name} wasn’t assigned the work.`)
+    }
   }
 
-  function handleAssign(staffId: string, task: string, reference: string) {
-    const member = staff.find(({ id }) => id === staffId)!
-    const assignment = reference ? `${task} · ${reference}` : task
-    updateStaff(
-      [staffId],
-      (current) => ({
-        ...current,
-        status: 'working',
-        assignment,
-        assignmentRef: reference,
-        tasksAssigned: current.tasksAssigned + 1,
-      }),
-      `Assigned by ${actor}: ${assignment}`,
-    )
-    setDialog(null)
-    setToast(`${member.name} assigned: ${task}`)
+  async function handleAttendance(staffId: string, action: AttendanceAction, time: string) {
+    const member = staff.find(({ id }) => id === staffId)
+    if (!member) return
+    let reason: string | undefined
+    if (action === 'Mark absent') {
+      reason = window.prompt(`Why is ${member.name} absent?`)?.trim()
+      if (!reason) {
+        setToast('A reason is needed to mark someone absent.')
+        return
+      }
+    }
+    try {
+      await recordAttendance({
+        user: staffId,
+        action: ATTENDANCE_CODES[action],
+        // Only a manager may set the time by hand
+        ...(permissions.manage && time ? { time } : {}),
+        ...(reason ? { reason } : {}),
+      }).unwrap()
+      setDialog(null)
+      setToast(`${member.name}: ${action.toLowerCase()} recorded`)
+    } catch (error) {
+      fail(error, `${member.name}’s attendance wasn’t recorded.`)
+    }
   }
 
-  function handleAttendance(staffId: string, action: AttendanceAction, time: string) {
-    const member = staff.find(({ id }) => id === staffId)!
-    updateStaff(
-      [staffId],
-      (current) => {
-        switch (action) {
-          case 'Clock in':
-            return { ...current, clockIn: time, status: 'available' }
-          case 'Clock out':
-            return { ...current, status: 'offline', assignment: '', assignmentRef: '' }
-          case 'Start break':
-            return { ...current, status: 'break' }
-          case 'End break':
-            return {
-              ...current,
-              status: current.assignment ? 'working' : 'available',
-              breakMinutes: current.breakMinutes + 15,
-            }
-          case 'Mark absent':
-            return { ...current, status: 'absent', clockIn: '', assignment: '', assignmentRef: '' }
-        }
-      },
-      action === 'Mark absent'
-        ? `Marked absent by ${actor}`
-        : `${action} at ${time} (recorded by ${actor})`,
-    )
-    setDialog(null)
-    setToast(`${member.name}: ${action.toLowerCase()} recorded`)
+  async function handleFillShift(shiftId: string, staffId: string) {
+    const shift = openShifts.find(({ id }) => id === shiftId)
+    const member = staff.find(({ id }) => id === staffId)
+    if (!shift || !member) return
+    try {
+      await fillShift({ shift: shiftId, user: staffId }).unwrap()
+      setDialog(null)
+      setToast(`${member.name} scheduled for ${shift.title}`)
+    } catch (error) {
+      fail(error, `${member.name} wasn’t scheduled.`)
+    }
   }
 
-  function handleFillShift(shiftId: string, staffId: string) {
-    const shift = openShifts.find(({ id }) => id === shiftId)!
-    const member = staff.find(({ id }) => id === staffId)!
-    updateStaff(
-      [staffId],
-      (current) => ({
-        ...current,
-        shiftStart:
-          current.shiftStart && current.shiftStart < shift.start
-            ? current.shiftStart
-            : shift.start,
-        shiftEnd: current.shiftEnd > shift.end ? current.shiftEnd : shift.end,
-      }),
-      `Scheduled for ${shift.title} (${shift.start}–${shift.end})`,
-    )
-    setOpenShifts(openShifts.filter(({ id }) => id !== shiftId))
-    setDialog(null)
-    setToast(`${member.name} scheduled for ${shift.title}`)
+  async function handleLeave(input: LeaveInput) {
+    try {
+      await requestLeave({
+        user: input.staffId,
+        type: LEAVE_CODES[input.type] ?? 'OTHER',
+        from: input.from,
+        to: input.to,
+        reason: input.reason,
+      }).unwrap()
+      setDialog(null)
+      setToast('Leave request submitted for approval')
+    } catch (error) {
+      fail(error, 'The leave request wasn’t submitted.')
+    }
   }
 
-  function handleLeave(input: LeaveInput) {
-    setLeave([
-      {
-        id: `LV-0${31 + leave.length}`,
-        ...input,
-        status: 'Pending',
-        approver: '',
-      },
-      ...leave,
-    ])
-    setDialog(null)
-    setToast('Leave request submitted for approval')
-  }
-
-  function handleLeaveDecision(id: string, approve: boolean) {
-    setLeave(
-      leave.map((request) =>
-        request.id === id
-          ? {
-              ...request,
-              status: approve ? 'Approved' : 'Rejected',
-              approver: actor,
-            }
-          : request,
-      ),
-    )
-    setToast(approve ? 'Leave approved' : 'Leave rejected')
+  async function handleLeaveDecision(id: string, approve: boolean) {
+    try {
+      await decideLeave({ id, approve }).unwrap()
+      setToast(approve ? 'Leave approved' : 'Leave rejected')
+    } catch (error) {
+      fail(error, 'The decision wasn’t saved.')
+    }
   }
 
   // POST /users creates the account, with its employment details, and emails
@@ -358,11 +332,6 @@ function StaffPage() {
           ),
         )
         const saved = ids.filter((_, index) => results[index].status === 'fulfilled')
-        updateStaff(
-          saved,
-          (member) => ({ ...member, status: 'suspended', assignment: '', assignmentRef: '' }),
-          `Account suspended by ${actor}`,
-        )
         setSelectedIds([])
         const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
         setToast(
@@ -383,7 +352,6 @@ function StaffPage() {
     updateUser({ uuid: id, changes: { accountStatus: 'ACTIVE' } })
       .unwrap()
       .then(() => {
-        updateStaff([id], (current) => ({ ...current, status: 'offline' }), `Account re-enabled by ${actor}`)
         setToast(`${member.name}’s account re-enabled`)
       })
       .catch((error: unknown) => setToast(saveFailureMessage(error, `${member.name}’s account wasn’t re-enabled.`)))
@@ -480,23 +448,6 @@ function StaffPage() {
             )}
           </div>
         </div>
-        <label className="flex w-fit items-center gap-2 text-[11px] whitespace-nowrap text-muted">
-          Viewing as
-          <select
-            value={role}
-            onChange={(event) => {
-              setRole(event.target.value as OrderRole)
-              setSelectedIds([])
-            }}
-            className={`${fieldClass} h-8 w-auto!`}
-          >
-            {ORDER_ROLES.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       <StaffKpis
@@ -582,7 +533,7 @@ function StaffPage() {
           requests={leave}
           staff={staff}
           canManage={permissions.manage}
-          onDecide={handleLeaveDecision}
+          onDecide={(id, approve) => void handleLeaveDecision(id, approve)}
           onRequest={() => setDialog({ name: 'leave' })}
         />
       </div>
@@ -627,7 +578,7 @@ function StaffPage() {
           staff={staff}
           initialStaffId={dialog.staffId}
           onClose={() => setDialog(null)}
-          onAssign={handleAssign}
+          onAssign={(staffId, task, reference) => void handleAssign(staffId, task, reference)}
         />
       )}
       {dialog?.name === 'attendance' && (
@@ -635,19 +586,19 @@ function StaffPage() {
           staff={staff}
           initialStaffId={dialog.staffId}
           onClose={() => setDialog(null)}
-          onSubmit={handleAttendance}
+          onSubmit={(staffId, action, time) => void handleAttendance(staffId, action, time)}
         />
       )}
-      {fillShift && (
+      {shiftToFill && (
         <FillShiftDialog
-          shift={fillShift}
+          shift={shiftToFill}
           staff={staff}
           onClose={() => setDialog(null)}
-          onFill={handleFillShift}
+          onFill={(shiftId, staffId) => void handleFillShift(shiftId, staffId)}
         />
       )}
       {dialog?.name === 'leave' && (
-        <LeaveDialog staff={staff} onClose={() => setDialog(null)} onSubmit={handleLeave} />
+        <LeaveDialog staff={staff} onClose={() => setDialog(null)} onSubmit={(input) => void handleLeave(input)} />
       )}
       {dialog?.name === 'add' && (
         <StaffWizard

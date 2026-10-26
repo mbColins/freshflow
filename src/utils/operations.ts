@@ -1,7 +1,6 @@
 import {
   BOTTLENECK_WAITING,
   DAILY_CAPACITY_KG,
-  OPS_STAFF,
   OVERRUN_RATIO,
   STAFF_JOB_CAPACITY,
   STAGES,
@@ -207,8 +206,8 @@ export function getHealth(jobs: OpsJob[], machinesDown: number, now: number): { 
   return { level, onSchedule, reasons }
 }
 
-export function getStaffLoad(jobs: OpsJob[]) {
-  return OPS_STAFF.map((name) => {
+export function getStaffLoad(jobs: OpsJob[], names: string[]) {
+  return names.map((name) => {
     const mine = jobs.filter((job) => job.staff === name)
     const open = mine.filter(({ stage }) => stage !== 'ready')
     const current = open.find(({ active }) => active)
@@ -223,8 +222,8 @@ export function getStaffLoad(jobs: OpsJob[]) {
 }
 
 // Whoever has the fewest jobs in hand
-export function recommendStaff(jobs: OpsJob[]) {
-  return [...getStaffLoad(jobs)].sort((a, b) => a.activeJobs - b.activeJobs)[0]
+export function recommendStaff(jobs: OpsJob[], names: string[]) {
+  return [...getStaffLoad(jobs, names)].sort((a, b) => a.activeJobs - b.activeJobs)[0]
 }
 
 export function jobsToCsv(jobs: OpsJob[], now: number) {

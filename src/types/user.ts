@@ -100,6 +100,25 @@ export type AppUser = {
   staff: StaffDetails
   // What the user may do, from GET /users/me only; null on other reads
   access: UserAccess | null
+  // Today's state, workload and performance, from the staff lists read with
+  // include=daily; null on other reads
+  daily: UserDaily | null
+}
+
+// The computed daily part of a staff member (`include=daily`)
+export type UserDaily = {
+  // WORKING, AVAILABLE, BREAK, OFFLINE, ABSENT, LEAVE or SUSPENDED
+  status: string
+  // HH:mm, empty when not clocked in
+  clockIn: string
+  breakMinutes: number
+  lateMinutes: number
+  assignment: string
+  assignmentRef: string
+  workload: { assigned: number; done: number; overdue: number; capacity: number }
+  // Managers only; the score is null with fewer than 10 tasks in 30 days
+  performance: { score: number | null; onTime: number | null; quality: number | null; rating: number | null; attendanceRate: number | null; lateThisMonth: number } | null
+  training: { done: number; total: number }
 }
 
 // The "effective permissions" part of GET /users/me: the role's permission

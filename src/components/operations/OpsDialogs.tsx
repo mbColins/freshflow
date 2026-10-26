@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ScanLine, TriangleAlert, UserPlus } from 'lucide-react'
-import { OPS_STAFF, QC_CHECKLIST } from '../../constants/operations'
+import { QC_CHECKLIST } from '../../constants/operations'
+import useStaff from '../../hooks/useStaff'
 import type { Machine } from '../../types/machine'
 import type { OpsJob, QcResult } from '../../types/operations'
 import { formatDate } from '../../utils/customers'
@@ -155,7 +156,8 @@ export function MachineDialog({
   job: OpsJob
   machines: Machine[]
   onClose: () => void
-  onStart: (machine: string) => void
+  // Receives the machine's uuid
+  onStart: (machineId: string) => void
 }) {
   const stage = getStage(job.stage)
   const options = machines
@@ -175,7 +177,7 @@ export function MachineDialog({
           <button type="button" onClick={onClose} className={secondaryButton}>
             Cancel
           </button>
-          <button type="button" disabled={!chosen} onClick={() => onStart(chosen!.name)} className={primaryButton}>
+          <button type="button" disabled={!chosen} onClick={() => onStart(chosen!.uuid)} className={primaryButton}>
             Start {stage.verb}
           </button>
         </>
@@ -304,10 +306,11 @@ export function QcDialog({ job, onClose, onSubmit }: { job: OpsJob; onClose: () 
 // ---------- Assign staff ----------
 
 export function AssignDialog({ job, jobs, onClose, onAssign }: { job: OpsJob; jobs: OpsJob[]; onClose: () => void; onAssign: (staff: string) => void }) {
-  const loads = getStaffLoad(jobs).sort((a, b) => a.activeJobs - b.activeJobs)
-  const best = recommendStaff(jobs)
+  const names = useStaff().map(({ name }) => name)
+  const loads = getStaffLoad(jobs, names).sort((a, b) => a.activeJobs - b.activeJobs)
+  const best = recommendStaff(jobs, names)
   // Start on the least busy person who doesn't already have the job
-  const [staff, setStaff] = useState(loads.find(({ name }) => name !== job.staff)?.name ?? OPS_STAFF[0])
+  const [staff, setStaff] = useState(loads.find(({ name }) => name !== job.staff)?.name ?? names[0] ?? '')
   return (
     <Modal
       open
@@ -325,7 +328,7 @@ export function AssignDialog({ job, jobs, onClose, onAssign }: { job: OpsJob; jo
         </>
       }
     >
-      <p className="mb-2 text-xs text-muted">{best.name} has the lowest current workload.</p>
+      <p className="mb-2 text-xs text-muted">{best ? `${best.name} has the lowest current workload.` : 'No staff to assign.'}</p>
       <ul role="radiogroup" aria-label="Staff" className="space-y-1.5">
         {loads.map(({ name, activeJobs, load, stage }) => {
           const selected = staff === name

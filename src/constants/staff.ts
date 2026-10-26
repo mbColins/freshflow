@@ -1,5 +1,4 @@
 import type { BadgeTone } from '../components/ui/Badge'
-import type { OrderRole } from '../types/order'
 import type { SkillLevel, StaffFilters, StaffStatus } from '../types/staff'
 import type { Department, EmploymentType, SkillCode, SkillLevelCode, Weekday } from '../types/user'
 
@@ -98,17 +97,38 @@ export const WEEKDAYS: { code: Weekday; short: string }[] = [
   { code: 'SUNDAY', short: 'Sun' },
 ]
 
-export const TASK_TYPES: { label: string; skill: string }[] = [
-  { label: 'Laundry order (washing)', skill: 'Washing' },
-  { label: 'Ironing / pressing', skill: 'Ironing' },
-  { label: 'QC inspection', skill: 'Quality Control' },
-  { label: 'Packaging', skill: 'Packaging' },
-  { label: 'Pickup or delivery', skill: 'Driving' },
-  { label: 'Maintenance task', skill: 'Machine Maintenance' },
-  { label: 'Front desk / customer', skill: 'Customer Service' },
+export const TASK_TYPES: { label: string; skill: string; code: string }[] = [
+  { label: 'Laundry order (washing)', skill: 'Washing', code: 'LAUNDRY_ORDER_WASHING' },
+  { label: 'Ironing / pressing', skill: 'Ironing', code: 'LAUNDRY_ORDER_IRONING' },
+  { label: 'QC inspection', skill: 'Quality Control', code: 'QUALITY_CHECK' },
+  { label: 'Packaging', skill: 'Packaging', code: 'PACKAGING' },
+  { label: 'Pickup or delivery', skill: 'Driving', code: 'PICKUP_DELIVERY' },
+  { label: 'Maintenance task', skill: 'Machine Maintenance', code: 'MACHINE_MAINTENANCE' },
+  { label: 'Front desk / customer', skill: 'Customer Service', code: 'FRONT_DESK' },
 ]
 
-export const LEAVE_TYPES = ['Annual', 'Sick', 'Personal', 'Maternity/Paternity', 'Emergency', 'Other']
+// The leave types the app shows, and the backend's codes for them
+export const LEAVE_CODES: Record<string, string> = {
+  Annual: 'ANNUAL',
+  Sick: 'SICK',
+  Personal: 'PERSONAL',
+  'Maternity/Paternity': 'PARENTAL',
+  Emergency: 'EMERGENCY',
+  Other: 'OTHER',
+}
+
+export const LEAVE_TYPES = Object.keys(LEAVE_CODES)
+
+// How the app labels the backend's daily status
+export const DAILY_STATUS: Record<string, string> = {
+  WORKING: 'working',
+  AVAILABLE: 'available',
+  BREAK: 'break',
+  OFFLINE: 'offline',
+  ABSENT: 'absent',
+  LEAVE: 'leave',
+  SUSPENDED: 'suspended',
+}
 
 // Load above this share of capacity counts as overloaded
 export const OVERLOAD_RATIO = 0.85
@@ -158,9 +178,11 @@ export type StaffPermissions = {
   payroll: boolean
 }
 
-export const STAFF_PERMISSIONS: Record<OrderRole, StaffPermissions> = {
-  admin: { manage: true, performance: true, payroll: true },
-  manager: { manage: true, performance: true, payroll: false },
-  receptionist: { manage: false, performance: false, payroll: false },
-  staff: { manage: false, performance: false, payroll: false },
-}
+// What the attendance dialog's actions are called by the backend
+export const ATTENDANCE_CODES = {
+  'Clock in': 'CLOCK_IN',
+  'Clock out': 'CLOCK_OUT',
+  'Start break': 'START_BREAK',
+  'End break': 'END_BREAK',
+  'Mark absent': 'MARK_ABSENT',
+} as const

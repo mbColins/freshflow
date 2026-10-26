@@ -14,7 +14,8 @@ import {
   Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { OPS_STAFF, STAGES } from '../../constants/operations'
+import { STAGES } from '../../constants/operations'
+import useStaff from '../../hooks/useStaff'
 import type { OpsPermissions } from '../../constants/operations'
 import type { OpsFilters, OpsJob, StageId } from '../../types/operations'
 import {
@@ -248,6 +249,7 @@ export function OpsToolbar({
   onChange: (patch: Partial<OpsFilters>) => void
   onReset: () => void
 }) {
+  const staffNames = useStaff().map(({ name }) => name)
   const select = `${fieldClass} w-auto! max-sm:flex-1`
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -270,7 +272,7 @@ export function OpsToolbar({
       </select>
       <select aria-label="Staff" value={filters.staff} onChange={(event) => onChange({ staff: event.target.value })} className={select}>
         <option value="">All staff</option>
-        {OPS_STAFF.map((name) => (
+        {staffNames.map((name) => (
           <option key={name}>{name}</option>
         ))}
       </select>

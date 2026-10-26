@@ -14,16 +14,10 @@ import {
   Users,
   Zap,
 } from 'lucide-react'
-import {
-  ACTUAL_STAGE_MINUTES,
-  DAILY_CAPACITY_KG,
-  HOURLY_PRODUCTION,
-  SERIES_COLORS,
-  STAGES,
-  SUPPLIES,
-  SUPPLY_LOW_PCT,
-  SUPPLY_WARN_PCT,
-} from '../../constants/operations'
+import { DAILY_CAPACITY_KG, SERIES_COLORS, STAGES, SUPPLY_LOW_PCT, SUPPLY_WARN_PCT } from '../../constants/operations'
+import useStaff from '../../hooks/useStaff'
+import { useListInventoryItemsQuery } from '../../services/inventoryApi'
+import type { OpsSummary } from '../../services/operationsApi'
 import { MACHINE_TYPES } from '../../constants/machines'
 import type { Branch } from '../../types/branch'
 import type { Machine } from '../../types/machine'
@@ -241,7 +235,7 @@ export function MachineStrip({ machines, now }: { machines: Machine[]; now: numb
 // ---------- Staff and bottlenecks ----------
 
 export function StaffWorkload({ jobs, selected, onSelect }: { jobs: OpsJob[]; selected: string; onSelect: (name: string) => void }) {
-  const staff = getStaffLoad(jobs)
+  const staff = getStaffLoad(jobs, useStaff().map(({ name }) => name))
   return (
     <Panel title="Staff Workload" subtitle="Click a name to show their jobs" icon={Users}>
       <ul className="space-y-2">
@@ -343,7 +337,21 @@ export function AttentionPanel({ jobs, ...actions }: { jobs: OpsJob[] } & OpsAct
 
 // ---------- Supplies and maintenance ----------
 
+// Stock levels the floor works from: the items closest to running out
+const SUPPLY_ITEMS = { page: 0, size: 200 }
+
 export function SuppliesPanel({ machines, now }: { machines: Machine[]; now: number }) {
+  const { data: stock = [] } = useListInventoryItemsQuery(SUPPLY_ITEMS)
+  const SUPPLIES = stock
+    .filter(({ max }) => max > 0)
+    .map(({ id, name, stock: held, reserved, max, unit }) => ({
+      name,
+      key: id,
+      remaining: Math.max(0, Math.min(100, Math.round(((held - reserved) / max) * 100))),
+      note: `${Math.max(0, held - reserved)} ${unit} available`,
+    }))
+    .sort((a, b) => a.remaining - b.remaining)
+    .slice(0, 5)
   const due = machines
     .map((machine) => ({ machine, ...getMaintenance(machine, now) }))
     .filter(({ days, machine }) => machine.status !== 'retired' && (days <= 7 || machine.status === 'maintenance'))
@@ -361,11 +369,12 @@ export function SuppliesPanel({ machines, now }: { machines: Machine[]; now: num
         }
       >
         <ul className="space-y-3">
-          {SUPPLIES.map(({ name, remaining, note }) => {
+          {SUPPLIES.length === 0 && <li className="text-xs text-muted">No stock is tracked yet.</li>}
+          {SUPPLIES.map(({ name, key, remaining, note }) => {
             const low = remaining <= SUPPLY_LOW_PCT
             const warn = remaining <= SUPPLY_WARN_PCT
             return (
-              <li key={name}>
+              <li key={key}>
                 <p className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="font-semibold text-ink">{name}</span>
                   <span className={`font-bold tabular-nums ${low ? 'text-danger' : warn ? 'text-warning' : 'text-ink'}`}>
@@ -379,7 +388,7 @@ export function SuppliesPanel({ machines, now }: { machines: Machine[]; now: num
             )
           })}
         </ul>
-        <p className="mt-3 text-[10px] text-muted">Sample levels; not yet read from the Inventory module.</p>
+        <p className="mt-3 text-[10px] text-muted">Available stock against each item’s maximum, from Inventory.</p>
       </Panel>
       <Panel
         title="Maintenance"
@@ -411,12 +420,17 @@ export function SuppliesPanel({ machines, now }: { machines: Machine[]; now: num
 
 // ---------- Analytics ----------
 
-export function OpsAnalytics({ jobs }: { jobs: OpsJob[] }) {
+export function OpsAnalytics({ jobs, summary }: { jobs: OpsJob[]; summary: OpsSummary | undefined }) {
   const [open, setOpen] = useState(false)
   const [hover, setHover] = useState<string | null>(null)
-  const stages = STAGES.filter(({ id }) => ACTUAL_STAGE_MINUTES[id] !== undefined)
-  const top = Math.max(...stages.map(({ id, expectedMin }) => Math.max(expectedMin, ACTUAL_STAGE_MINUTES[id]!)))
-  const topKg = Math.max(...HOURLY_PRODUCTION.map(([, kg]) => kg))
+  // Averages of the stage logs closed in the last 7 days, and today's kilograms in two-hour blocks
+  const ACTUAL_STAGE_MINUTES: Partial<Record<string, number>> = Object.fromEntries(
+    (summary?.stages ?? []).flatMap(({ stage, avgMinutes }) => (avgMinutes === null ? [] : [[stage, avgMinutes]])),
+  )
+  const HOURLY_PRODUCTION: [string, number][] = (summary?.kgByBlock ?? []).map(({ from, to, kg }) => [`${from.slice(0, 2)}–${to.slice(0, 2)}`, kg])
+  const stages = STAGES.filter(({ id }) => ACTUAL_STAGE_MINUTES[id] !== undefined && STAGES.find((stage) => stage.id === id)!.expectedMin > 0)
+  const top = Math.max(1, ...stages.map(({ id, expectedMin }) => Math.max(expectedMin, ACTUAL_STAGE_MINUTES[id]!)))
+  const topKg = Math.max(1, ...HOURLY_PRODUCTION.map(([, kg]) => kg))
   const inspected = jobs.filter(({ stage }) => stage === 'packaging' || stage === 'ready').length
   const failures = jobs.reduce((sum, job) => sum + job.qcFailures, 0)
   const metrics: [string, string][] = [
@@ -425,7 +439,7 @@ export function OpsAnalytics({ jobs }: { jobs: OpsJob[] }) {
     ['Kg finished today', `${HOURLY_PRODUCTION.reduce((sum, [, kg]) => sum + kg, 0)} kg`],
     ['Slowest stage vs plan', (() => {
       const worst = [...stages].sort((a, b) => ACTUAL_STAGE_MINUTES[b.id]! / b.expectedMin - ACTUAL_STAGE_MINUTES[a.id]! / a.expectedMin)[0]
-      return `${worst.label} +${ACTUAL_STAGE_MINUTES[worst.id]! - worst.expectedMin} min`
+      return worst ? `${worst.label} ${ACTUAL_STAGE_MINUTES[worst.id]! >= worst.expectedMin ? '+' : '−'}${Math.abs(ACTUAL_STAGE_MINUTES[worst.id]! - worst.expectedMin)} min` : '—'
     })()],
   ]
   return (
@@ -504,7 +518,7 @@ export function OpsAnalytics({ jobs }: { jobs: OpsJob[] }) {
               </ul>
             </figure>
           </div>
-          <p className="text-[10px] text-muted">Stage averages and hourly production are sample figures until job history is stored.</p>
+          <p className="text-[10px] text-muted">Stage averages cover the last 7 days. Production counts jobs that reached Ready today.</p>
         </div>
       )}
     </section>

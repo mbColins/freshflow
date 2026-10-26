@@ -10,6 +10,7 @@ import {
   SKILL_LEVELS,
   STAFF_STATUSES,
   WEEKDAYS,
+  DAILY_STATUS,
 } from '../constants/staff'
 import { USER_TYPES } from '../constants/users'
 import type { SkillLevel, StaffFilters, StaffMember, StaffStatus } from '../types/staff'
@@ -254,6 +255,7 @@ export function memberFromUser(user: AppUser): StaffMember {
   const typeLabel = user.userType ? USER_TYPES[user.userType] : ''
   const details = user.staff
   const suspended = !user.active || details.accountStatus === 'SUSPENDED'
+  const daily = user.daily
   return {
     id: user.uuid,
     username: user.username,
@@ -271,32 +273,33 @@ export function memberFromUser(user: AppUser): StaffMember {
     manager: details.managerName || 'Not recorded',
     // The server role; the permission preview only knows the local templates
     template: user.role || typeLabel,
-    status: suspended ? 'suspended' : 'offline',
+    status: suspended ? 'suspended' : ((daily && DAILY_STATUS[daily.status]) || 'offline') as StaffMember['status'],
     shiftStart: details.shiftStart,
     shiftEnd: details.shiftEnd,
     workingDays: formatWorkingDays(details.workingDays),
-    clockIn: '',
-    breakMinutes: 0,
-    assignment: '',
-    assignmentRef: '',
-    tasksAssigned: 0,
-    tasksDone: 0,
-    tasksOverdue: 0,
-    capacity: 12,
-    attendanceRate: 100,
-    lateThisMonth: 0,
-    score: 0,
-    onTime: 0,
-    quality: 0,
-    rating: 0,
+    clockIn: daily?.clockIn ?? '',
+    breakMinutes: daily?.breakMinutes ?? 0,
+    assignment: daily?.assignment ?? '',
+    assignmentRef: daily?.assignmentRef ?? '',
+    tasksAssigned: daily?.workload.assigned ?? 0,
+    tasksDone: daily?.workload.done ?? 0,
+    tasksOverdue: daily?.workload.overdue ?? 0,
+    capacity: daily?.workload.capacity ?? 12,
+    attendanceRate: daily?.performance?.attendanceRate ?? 100,
+    lateThisMonth: daily?.performance?.lateThisMonth ?? 0,
+    // Null until there are enough finished tasks to judge
+    score: daily?.performance?.score ?? 0,
+    onTime: daily?.performance?.onTime ?? 0,
+    quality: daily?.performance?.quality ?? 0,
+    rating: daily?.performance?.rating ?? 0,
     skills: details.skills.flatMap(({ skill, level }) => {
       const name = labelFor(SKILL_CODES, skill)
       const levelLabel = labelFor(SKILL_LEVEL_CODES, level) as SkillLevel | ''
       return name && levelLabel ? [{ name, level: levelLabel }] : []
     }),
     certification: details.certification,
-    trainingDone: 0,
-    trainingTotal: 10,
+    trainingDone: daily?.training.done ?? 0,
+    trainingTotal: daily?.training.total ?? 0,
     emergencyContact: details.emergencyContact || 'Not provided',
     monthlySalary: details.monthlySalary,
     leaveBalance: details.leaveBalance,

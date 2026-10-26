@@ -25,7 +25,12 @@ export type OpsJob = {
   // Being worked on right now, as opposed to waiting in the stage's queue
   active: boolean
   staff: string
+  // Their uuids, empty when nobody / no machine is on the job
+  staffId: string
   machine: string
+  machineId: string
+  // The branch the order is processed at
+  branch: string
   // When the job entered its current stage, or started being worked on
   stageSince: string
   dueAt: string

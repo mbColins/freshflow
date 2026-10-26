@@ -63,6 +63,11 @@ type RawUser = {
   certification?: { name?: string | null; expiresAt?: string | null } | null
   accountStatus?: string | null
   statusReason?: string | null
+  // Only with include=daily
+  today?: { status?: string | null; clockIn?: string | null; breakMinutes?: number | null; lateMinutes?: number | null; assignment?: string | null; assignmentRef?: string | null } | null
+  workload?: { assigned?: number; done?: number; overdue?: number; capacity?: number } | null
+  performance?: { score?: number | null; onTime?: number | null; quality?: number | null; rating?: number | null; attendanceRate?: number | null; lateThisMonth?: number } | null
+  training?: { done?: number; total?: number } | null
 }
 
 // BigDecimal may arrive as a number or a string
@@ -136,6 +141,33 @@ function toUser(raw: RawUser): AppUser {
           subscriptionStatus: raw.subscription?.status ?? '',
         }
       : null,
+    daily: raw.today
+      ? {
+          status: raw.today.status ?? 'OFFLINE',
+          clockIn: toClock(raw.today.clockIn),
+          breakMinutes: raw.today.breakMinutes ?? 0,
+          lateMinutes: raw.today.lateMinutes ?? 0,
+          assignment: raw.today.assignment ?? '',
+          assignmentRef: raw.today.assignmentRef ?? '',
+          workload: {
+            assigned: raw.workload?.assigned ?? 0,
+            done: raw.workload?.done ?? 0,
+            overdue: raw.workload?.overdue ?? 0,
+            capacity: raw.workload?.capacity ?? 12,
+          },
+          performance: raw.performance
+            ? {
+                score: raw.performance.score ?? null,
+                onTime: raw.performance.onTime ?? null,
+                quality: raw.performance.quality ?? null,
+                rating: raw.performance.rating ?? null,
+                attendanceRate: raw.performance.attendanceRate ?? null,
+                lateThisMonth: raw.performance.lateThisMonth ?? 0,
+              }
+            : null,
+          training: { done: raw.training?.done ?? 0, total: raw.training?.total ?? 0 },
+        }
+      : null,
   }
 }
 
@@ -148,6 +180,8 @@ export type UserListParams = {
   // Zero-based; the backend defaults to page 0, size 10
   page?: number
   size?: number
+  // 'daily' adds today's state, workload and performance to each person
+  include?: 'daily'
 }
 
 export type UserPage = { items: AppUser[]; total: number; totalPages: number }
@@ -185,8 +219,9 @@ export const userApi = api.injectEndpoints({
     }),
     // Every user of the caller's tenant, all branches, excluding the caller.
     // Only for UserType TENANT; 403 otherwise
-    listTenantUsers: build.query<AppUser[], void>({
-      query: () => '/users/tenant',
+    // `daily` adds today's state, workload and performance to each person
+    listTenantUsers: build.query<AppUser[], { daily?: boolean } | void>({
+      query: (params) => ({ url: '/users/tenant', params: params?.daily ? { include: 'daily' } : undefined }),
       transformResponse: (response: ApiResponse<unknown>) => toUsers(response.content),
       providesTags: [LIST],
     }),
