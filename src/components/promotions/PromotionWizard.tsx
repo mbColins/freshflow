@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Plus, Send, Trash2, TriangleAlert, Wand2 } from 'lucide-react'
-import { BRANCH_SERVICES } from '../../constants/branches'
+import { useServiceNames } from '../../hooks/usePromotions'
 import {
   AUDIENCES,
   BANNERS,
@@ -63,6 +63,7 @@ function PromotionWizard({
 }) {
   const [step, setStep] = useState(0)
   const [draft, setDraft] = useState(initial)
+  const serviceNames = useServiceNames()
   const patch = (change: Partial<PromotionDraft>) => setDraft((current) => ({ ...current, ...change }))
   const problems = getDraftProblems(draft, takenCodes)
   const last = PROMO_WIZARD_STEPS.length - 1
@@ -382,16 +383,16 @@ function PromotionWizard({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className={sectionTitle}>What it applies to</p>
               <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
-                <input type="checkbox" checked={draft.services.length === 0} onChange={(event) => patch({ services: event.target.checked ? [] : [BRANCH_SERVICES[0].name] })} className="size-4 accent-brand" />
+                <input type="checkbox" checked={draft.services.length === 0} onChange={(event) => patch({ services: event.target.checked ? [] : serviceNames.slice(0, 1) })} className="size-4 accent-brand" />
                 The whole order
               </label>
             </div>
             {draft.services.length > 0 && (
               <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-                {BRANCH_SERVICES.map(({ name }) => (
+                {serviceNames.map((name) => (
                   <li key={name}>
                     <label className={checkRow}>
-                      <input type="checkbox" checked={draft.services.includes(name)} onChange={() => patch({ services: toggle(draft.services, name, BRANCH_SERVICES.map((service) => service.name)) })} className="size-4 accent-brand" />
+                      <input type="checkbox" checked={draft.services.includes(name)} onChange={() => patch({ services: toggle(draft.services, name, serviceNames) })} className="size-4 accent-brand" />
                       {name}
                     </label>
                   </li>

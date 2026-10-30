@@ -22,19 +22,27 @@ import {
 import type { PromotionActions, PromotionSort } from '../components/promotions/PromotionsListParts'
 import PromotionWizard from '../components/promotions/PromotionWizard'
 import Menu, { MenuItem } from '../components/ui/Menu'
-import { CURRENT_USER, ORDER_ROLES } from '../constants/orders'
+import { ORDER_ROLES } from '../constants/orders'
 import {
   DEFAULT_STACKING,
   EMPTY_PROMOTION_FILTERS,
   PROMOTION_PERMISSIONS,
 } from '../constants/promotions'
-import { SAMPLE_PROMOTIONS } from '../constants/samplePromotions'
 import useBranches from '../hooks/useBranches'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
+import { promotionRequest, usePromotionsQuery } from '../hooks/usePromotions'
+import {
+  useCreatePromotionMutation,
+  useDuplicatePromotionMutation,
+  useGetStackingPolicyQuery,
+  useSetPromotionStateMutation,
+  useSetStackingPolicyMutation,
+  useUpdatePromotionMutation,
+} from '../services/promotionApi'
+import { saveFailureMessage } from '../utils/apiErrors'
 import type { OrderRole } from '../types/order'
 import type {
-  Promotion,
   PromotionDraft,
   PromotionFilters,
   StackingPolicy,
@@ -42,17 +50,13 @@ import type {
 import { downloadFile } from '../utils/orders'
 import {
   comparePromotions,
-  createPromotion,
   emptyDraft,
   getPromotionStatus,
   importPromotions,
   matchesPromotionFilters,
-  nextPromotionId,
   promotionsToCsv,
-  suggestCode,
   toDateKey,
   toDraft,
-  withEvent,
 } from '../utils/promotions'
 import type { PromotionSortKey } from '../utils/promotions'
 
@@ -72,8 +76,13 @@ const VIEWS = [
 function PromotionsPage() {
   const now = useNow()
   const branches = useBranches()
-  // TODO: replace this in-memory list with the promotions API
-  const [promotions, setPromotions] = useState(SAMPLE_PROMOTIONS)
+  const { promotions, lookups, isLoading, isError, error, isFetching, refetch } = usePromotionsQuery()
+  const [createPromotion] = useCreatePromotionMutation()
+  const [updatePromotion] = useUpdatePromotionMutation()
+  const [setPromotionState] = useSetPromotionStateMutation()
+  const [duplicatePromotion] = useDuplicatePromotionMutation()
+  const [saveStacking] = useSetStackingPolicyMutation()
+  const policyQuery = useGetStackingPolicyQuery()
   const [filters, setFilters] = useState<PromotionFilters>(EMPTY_PROMOTION_FILTERS)
   const [sort, setSort] = useState<PromotionSort>({ key: 'status', descending: false })
   const [openId, setOpenId] = useState<string | null>(null)
@@ -83,12 +92,15 @@ function PromotionsPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [role, setRole] = useLocalStorage<OrderRole>('promotions.role', 'admin')
   const [view, setView] = useLocalStorage<PromotionView>('promotions.view', 'grid')
-  const [policy, setPolicy] = useLocalStorage<StackingPolicy>('promotions.stacking', DEFAULT_STACKING)
   const searchRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLElement>(null)
   const analyticsRef = useRef<HTMLDivElement>(null)
 
+  // Until the server answers (or for people who may not read it) the default applies
+  const policy: StackingPolicy = policyQuery.data
+    ? { mode: ({ NONE: 'none', WITH_DELIVERY: 'withDelivery', ALL: 'all' } as const)[policyQuery.data.mode], maxCombined: policyQuery.data.maxCombined }
+    : DEFAULT_STACKING
   const permissions = PROMOTION_PERMISSIONS[role]
   const branchOptions = branches.map(({ id, name }) => ({ id, name }))
   // Everything except the status filter, so the status cards keep their counts
@@ -122,63 +134,79 @@ function PromotionsPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const update = (id: string, change: (promotion: Promotion) => Promotion, event: string) =>
-    setPromotions((current) =>
-      current.map((promotion) => (promotion.id === id ? withEvent(change(promotion), CURRENT_USER, event) : promotion)),
-    )
   const find = (id: string) => promotions.find((promotion) => promotion.id === id)!
+  const fail = (failure: unknown, message: string) =>
+    setToast(saveFailureMessage(failure, message, 'The code is already used, or the promotion has been redeemed and that can’t change.'))
 
-  function handleSave(draft: PromotionDraft, publish: boolean) {
-    const state = publish ? 'published' : draft.state
+  // Create takes the whole campaign; an edit sends only what changed, because
+  // the code, type and kind are locked once a promotion has been redeemed
+  async function handleSave(draft: PromotionDraft, publish: boolean) {
     const scheduled = draft.startAt > toDateKey(now)
-    if (wizard?.mode === 'edit') {
-      update(draft.id, (promotion) => ({ ...promotion, ...draft, state }), publish ? 'Published the promotion' : 'Edited the promotion')
-      setToast(publish ? `${draft.name} ${scheduled ? 'scheduled' : 'published'}` : `${draft.name} updated`)
-    } else {
-      setPromotions([createPromotion({ ...draft, state }, CURRENT_USER), ...promotions])
-      setToast(publish ? `${draft.name} ${scheduled ? 'scheduled' : 'is now live'}` : `${draft.name} saved as a draft`)
+    try {
+      if (wizard?.mode === 'edit') {
+        const original = find(draft.id)
+        const before = promotionRequest(toDraft(original), lookups)
+        const after = promotionRequest(draft, lookups)
+        const { state, ...changes } = Object.fromEntries(
+          Object.entries(after).filter(([key, value]) => JSON.stringify(before[key as keyof typeof before]) !== JSON.stringify(value)),
+        ) as typeof after
+        void state
+        if (Object.keys(changes).length > 0) await updatePromotion({ id: draft.id, changes }).unwrap()
+        if (publish && original.state !== 'published') await setPromotionState({ id: draft.id, state: 'PUBLISHED' }).unwrap()
+        setToast(publish ? `${draft.name} ${scheduled ? 'scheduled' : 'published'}` : `${draft.name} updated`)
+      } else {
+        await createPromotion(promotionRequest({ ...draft, state: publish ? 'published' : 'draft' }, lookups)).unwrap()
+        setToast(publish ? `${draft.name} ${scheduled ? 'scheduled' : 'is now live'}` : `${draft.name} saved as a draft`)
+      }
+      setWizard(null)
+    } catch (failure) {
+      fail(failure, wizard?.mode === 'edit' ? 'The promotion wasn’t saved.' : 'The promotion wasn’t created.')
     }
-    setWizard(null)
   }
 
-  function handleTogglePause(id: string) {
+  async function handleTogglePause(id: string) {
     const promotion = find(id)
     const paused = promotion.state === 'paused'
-    update(id, (current) => ({ ...current, state: paused ? 'published' : 'paused' }), paused ? 'Resumed the promotion' : 'Paused the promotion')
-    setToast(`${promotion.name} ${paused ? 'resumed' : 'paused'}`)
+    try {
+      await setPromotionState({ id, state: paused ? 'PUBLISHED' : 'PAUSED' }).unwrap()
+      setToast(`${promotion.name} ${paused ? 'resumed' : 'paused'}`)
+    } catch (failure) {
+      fail(failure, `${promotion.name} wasn’t ${paused ? 'resumed' : 'paused'}. Only the owner can publish.`)
+    }
   }
 
-  function handleDuplicate(id: string) {
+  // The server makes a draft copy without the code; edit it from the list
+  async function handleDuplicate(id: string) {
     const source = find(id)
     setOpenId(null)
-    setWizard({
-      mode: 'create',
-      draft: {
-        ...toDraft(source),
-        id: nextPromotionId(promotions),
-        name: `${source.name} (copy)`,
-        code: source.code ? suggestCode(source.name, 0, promotions.map(({ code }) => code)) : '',
-        state: 'draft',
-      },
-    })
+    try {
+      await duplicatePromotion(id).unwrap()
+      setToast(`${source.name} copied as a draft`)
+    } catch (failure) {
+      fail(failure, `${source.name} wasn’t copied.`)
+    }
   }
 
   function handleArchive(id: string) {
     const promotion = find(id)
+    // An archived promotion cannot come back; a draft copy of it can
     if (promotion.state === 'archived') {
-      update(id, (current) => ({ ...current, state: 'draft' }), 'Restored the promotion as a draft')
-      setToast(`${promotion.name} restored as a draft`)
+      void handleDuplicate(id)
       return
     }
     setConfirm({
       title: `Archive ${promotion.name}?`,
-      body: 'The promotion stops applying to new orders and its code stops working. Its history and results are kept, and it can be restored as a draft.',
+      body: 'The promotion stops applying to new orders and its code stops working. Its history and results are kept. It can’t be restored, but you can copy it as a draft.',
       confirmLabel: 'Archive',
       destructive: true,
-      onConfirm: () => {
-        update(id, (current) => ({ ...current, state: 'archived' }), 'Archived the promotion')
-        setOpenId(null)
-        setToast(`${promotion.name} archived`)
+      onConfirm: async () => {
+        try {
+          await setPromotionState({ id, state: 'ARCHIVED' }).unwrap()
+          setOpenId(null)
+          setToast(`${promotion.name} archived`)
+        } catch (failure) {
+          fail(failure, `${promotion.name} wasn’t archived.`)
+        }
       },
     })
   }
@@ -205,15 +233,24 @@ function PromotionsPage() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    const { added, skipped, missingHeader } = importPromotions(await file.text(), promotions, CURRENT_USER, now)
+    const { added, skipped, missingHeader } = importPromotions(await file.text(), promotions, 'You', now)
     if (missingHeader) {
       setToast('Import failed: the file needs a header row with a “name” column')
       return
     }
-    if (added.length > 0) setPromotions([...added, ...promotions])
+    let saved = 0
+    let refused = 0
+    for (const promotion of added) {
+      try {
+        await createPromotion(promotionRequest({ ...toDraft(promotion), state: 'draft' }, lookups)).unwrap()
+        saved += 1
+      } catch {
+        refused += 1
+      }
+    }
     setToast(
-      `Imported ${added.length} ${added.length === 1 ? 'promotion' : 'promotions'} as drafts` +
-        (skipped ? `, skipped ${skipped} (missing name or value, or duplicate code)` : ''),
+      `Imported ${saved} ${saved === 1 ? 'promotion' : 'promotions'} as drafts` +
+        (skipped || refused ? `, skipped ${skipped + refused} (missing name or value, duplicate code, or refused by the server)` : ''),
     )
   }
 
@@ -236,7 +273,7 @@ function PromotionsPage() {
     onArchive: handleArchive,
     onCopyCode: handleCopyCode,
   }
-  const openCreate = () => setWizard({ mode: 'create', draft: emptyDraft(nextPromotionId(promotions), now) })
+  const openCreate = () => setWizard({ mode: 'create', draft: emptyDraft('new', now) })
 
   return (
     <>
@@ -317,6 +354,23 @@ function PromotionsPage() {
           </select>
         </label>
       </div>
+
+      {isLoading && (
+        <p role="status" className="rounded-xl bg-white px-4 py-6 text-center text-xs text-muted ring-1 ring-line">
+          Loading promotions…
+        </p>
+      )}
+      {isError && promotions.length === 0 && (
+        <div role="alert" className="flex flex-col items-center gap-2 rounded-xl bg-white px-4 py-10 text-center ring-1 ring-line">
+          <h2 className="text-sm font-bold text-ink">Couldn’t load the promotions</h2>
+          <p className="max-w-md text-xs text-muted">
+            {saveFailureMessage(error, 'The server refused the request.')} Only the owner and managers can see promotions.
+          </p>
+          <button type="button" onClick={() => void refetch()} disabled={isFetching} className={`${secondaryButton} mt-1`}>
+            {isFetching ? 'Retrying…' : 'Try again'}
+          </button>
+        </div>
+      )}
 
       <PromotionKpis
         promotions={scoped}
@@ -450,10 +504,17 @@ function PromotionsPage() {
         <StackingDialog
           policy={policy}
           onClose={() => setStackingOpen(false)}
-          onSave={(next) => {
-            setPolicy(next)
-            setStackingOpen(false)
-            setToast('Stacking rules saved')
+          onSave={async (next) => {
+            try {
+              await saveStacking({
+                mode: ({ none: 'NONE', withDelivery: 'WITH_DELIVERY', all: 'ALL' } as const)[next.mode],
+                maxCombined: next.maxCombined,
+              }).unwrap()
+              setStackingOpen(false)
+              setToast('Stacking rules saved')
+            } catch (failure) {
+              setToast(saveFailureMessage(failure, 'The rules weren’t saved. Only the owner can change them.'))
+            }
           }}
         />
       )}

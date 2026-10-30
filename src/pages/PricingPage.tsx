@@ -48,7 +48,7 @@ import {
   SAMPLE_PRICING_CONFIG,
   SAMPLE_SCHEDULED_CHANGES,
 } from '../constants/pricing'
-import { SAMPLE_PROMOTIONS } from '../constants/samplePromotions'
+import { usePromotionsQuery } from '../hooks/usePromotions'
 import { DEFAULT_CATEGORIES } from '../constants/services'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
@@ -118,11 +118,13 @@ function PricingPage() {
       const [left, right] = [getSortValue(a, sort.key), getSortValue(b, sort.key)]
       return (left < right ? -1 : left > right ? 1 : 0) * (sort.descending ? -1 : 1)
     })
+  // The Promotions module's campaigns, for the health check and the campaigns panel
+  const { promotions } = usePromotionsQuery()
   const filtersActive = Object.values(filters).some((value) => value !== '')
   const branches = allServices[0]?.branches.map(({ branch }) => branch) ?? []
   const categories = [...new Set([...DEFAULT_CATEGORIES, ...customCategories, ...allServices.map(({ category }) => category)])]
   const rules = getPricingRules(services.filter(({ status }) => status === 'active'), config)
-  const health = getPricingHealth(allServices, config, scheduled, SAMPLE_PROMOTIONS, now)
+  const health = getPricingHealth(allServices, config, scheduled, promotions, now)
   const dialogService =
     dialog && 'serviceId' in dialog ? allServices.find(({ id }) => id === dialog.serviceId) : undefined
   const patchFilters = (patch: Partial<PricingFilters>) => setFilters({ ...filters, ...patch })
@@ -296,7 +298,7 @@ function PricingPage() {
   const orders = live.reduce((sum, { stats }) => sum + stats.orders, 0)
   const revenue = live.reduce((sum, { stats }) => sum + stats.revenue, 0)
   const customBranches = [...new Set(live.flatMap((service) => getOverrides(service).map(({ branch }) => branch)))]
-  const activePromotions = SAMPLE_PROMOTIONS.filter((promotion) => getPromotionStatus(promotion, now) === 'active')
+  const activePromotions = promotions.filter((promotion) => getPromotionStatus(promotion, now) === 'active')
   const month = toDateKey(now).slice(0, 7)
   const changedThisMonth = changes.filter(({ at }) => toDateKey(new Date(at).getTime()).slice(0, 7) === month).length
 
@@ -489,7 +491,7 @@ function PricingPage() {
 
           <div ref={healthRef} className="grid scroll-mt-20 gap-4 lg:grid-cols-2">
             <HealthPanel health={health} onReview={(serviceId) => navigate(`/services/${serviceId}`)} />
-            <CampaignsPanel promotions={SAMPLE_PROMOTIONS} now={now} />
+            <CampaignsPanel promotions={promotions} now={now} />
           </div>
 
           <PriceConfigsPanel canManage={permissions.manage} onToast={setToast} />

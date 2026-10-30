@@ -5,8 +5,11 @@ import {
   LOYALTY_TIERS,
 } from '../constants/customers'
 import type {
+  Channel,
+  Consent,
   CrmCustomer,
   CustomerFilters,
+  CustomerStatus,
   SegmentId,
 } from '../types/customer'
 import type { Customer, PaymentMethod } from '../types/order'
@@ -453,67 +456,196 @@ export function toOrderCustomer(customer: CrmCustomer): Customer {
 // ---------- API ----------
 
 const text = (value: string | null | undefined) => value?.trim() ?? ''
+const amount = (value: unknown) => {
+  const parsed = typeof value === 'string' ? Number(value) : value
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : 0
+}
 
-function splitName(name: string) {
+export function splitCustomerName(name: string) {
   const [first = '', ...rest] = name.trim().split(/\s+/)
   return { firstname: first, lastname: rest.join(' ') }
 }
 
-// A customer from the API, with defaults for everything the backend doesn't
-// store (status, tags, preferences, order history…); null without an id.
-// `branch` may be empty when the response only has the branch uuid; the
-// customers hook fills the name in from the branch dropdown.
+const STATUSES: CustomerStatus[] = ['active', 'inactive', 'new', 'vip', 'suspended']
+
+const COMMUNICATION_CHANNELS: Record<string, Channel> = { SMS: 'SMS', WHATSAPP: 'WhatsApp', EMAIL: 'Email', CALL: 'Call' }
+
+const PAYMENT_METHODS: Record<string, PaymentMethod> = {
+  CASH: 'Cash',
+  MOBILE_MONEY: 'Mobile Money',
+  CARD: 'Card',
+  BANK_TRANSFER: 'Bank Transfer',
+}
+
+// The one channel the backend keeps per customer, shown as the matching consent
+function consentFromApi(raw: CustomerResponse['consent']): Consent {
+  const channel = raw?.channel?.toUpperCase()
+  return {
+    sms: channel === 'SMS',
+    whatsapp: channel === 'WHATSAPP',
+    email: channel === 'EMAIL',
+    marketing: !!raw?.marketing,
+  }
+}
+
+// A customer from the API. The response is shaped like CrmCustomer; anything
+// missing falls back to a sensible default. `branch` may be empty when the
+// response only has the branch uuid; the customers hook fills the name in from
+// the branch dropdown. Null without an id.
 export function customerFromApi(raw: CustomerResponse | null | undefined): CrmCustomer | null {
   const id = raw?.uuid ?? raw?.id
   if (!raw || id === undefined || id === null || id === '') return null
   const branch = typeof raw.branch === 'object' && raw.branch ? raw.branch : null
   const branchId = raw.branchId ?? branch?.uuid ?? branch?.id
-  const name = `${text(raw.firstname)} ${text(raw.lastname)}`.trim()
+  const phone = text(raw.phone) || text(raw.phoneNumber)
+  const name = text(raw.name) || `${text(raw.firstname)} ${text(raw.lastname)}`.trim() || text(raw.companyName) || phone
   const customer = createCustomer(
     String(id),
-    { name: name || text(raw.phoneNumber), phone: text(raw.phoneNumber), email: text(raw.email), street: text(raw.homeAddress) },
+    { name, phone, email: text(raw.email), street: text(raw.homeAddress) },
     text(raw.branchName) || text(branch?.name) || (typeof raw.branch === 'string' ? raw.branch : ''),
-    '',
+    text(raw.preferredService),
   )
-  const [address] = customer.addresses
+  const status = raw.status?.toLowerCase() as CustomerStatus | undefined
+  const addresses = raw.addresses
+    ? raw.addresses.map((address, index) => ({
+        id: address.id ?? `address-${index + 1}`,
+        label: text(address.label),
+        street: text(address.street),
+        city: text(address.city),
+        region: text(address.region),
+        landmark: text(address.landmark),
+        instructions: text(address.instructions),
+        isDefault: !!(address.isDefault ?? address.default),
+      }))
+    : // Older responses only had homeAddress and neighbourhood
+      raw.homeAddress || raw.neighbourhood
+      ? [
+          {
+            id: 'address-1',
+            label: 'Home',
+            street: text(raw.homeAddress),
+            city: '',
+            region: '',
+            landmark: text(raw.neighbourhood),
+            instructions: '',
+            isDefault: true,
+          },
+        ]
+      : []
+
   return {
     ...customer,
-    status: 'active',
-    tags: [],
-    points: raw.loyaltyPoints ?? 0,
+    kind: raw.kind?.toLowerCase() === 'corporate' ? 'corporate' : 'individual',
+    status: status && STATUSES.includes(status) ? status : 'active',
+    points: raw.points ?? raw.loyaltyPoints ?? 0,
     branchId: branchId === undefined || branchId === null ? '' : String(branchId),
     referralSource: text(raw.referralSource),
-    registeredAt: raw.createdAt ?? customer.registeredAt,
-    activity: [],
-    // homeAddress and neighbourhood are the default address's street and landmark
-    addresses: address
-      ? [{ ...address, landmark: text(raw.neighbourhood) }]
-      : raw.neighbourhood
-        ? [{ id: 'address-1', label: 'Home', street: '', city: '', region: '', landmark: text(raw.neighbourhood), instructions: '', isDefault: true }]
-        : [],
+    registeredAt: raw.registeredAt ?? raw.createdAt ?? customer.registeredAt,
+    lastOrderAt: raw.lastOrderAt ?? null,
+    orders: raw.orders ?? 0,
+    spent: amount(raw.spent),
+    outstanding: amount(raw.outstanding),
+    outstandingOrders: raw.outstandingOrders ?? 0,
+    cadenceDays: raw.cadenceDays || customer.cadenceDays,
+    tags: raw.tags ?? [],
+    addresses,
+    laundry: raw.laundry
+      ? {
+          detergent: text(raw.laundry.detergent) || customer.laundry.detergent,
+          softener: text(raw.laundry.softener) || customer.laundry.softener,
+          folding: text(raw.laundry.folding) || customer.laundry.folding,
+          packaging: text(raw.laundry.packaging) || customer.laundry.packaging,
+          ironing: !!raw.laundry.ironing,
+          instructions: text(raw.laundry.instructions),
+        }
+      : customer.laundry,
+    delivery: raw.delivery
+      ? {
+          method: raw.delivery.method?.toLowerCase() === 'delivery' ? 'delivery' : 'pickup',
+          window: text(raw.delivery.window),
+          instructions: text(raw.delivery.instructions),
+        }
+      : customer.delivery,
+    notes: (raw.notes ?? []).map((note, index) => ({
+      id: note.id ?? `note-${index}`,
+      text: text(note.text),
+      by: text(note.by),
+      at: note.at ?? '',
+    })),
+    communications: (raw.communications ?? []).map((entry) => ({
+      at: entry.at ?? '',
+      channel: COMMUNICATION_CHANNELS[entry.channel?.toUpperCase() ?? ''] ?? 'SMS',
+      message: text(entry.message),
+      status: text(entry.status),
+    })),
+    payments: (raw.payments ?? []).map((payment, index) => ({
+      id: payment.id ?? `payment-${index}`,
+      at: payment.at ?? '',
+      order: text(payment.order),
+      amount: amount(payment.amount),
+      method: PAYMENT_METHODS[payment.method?.toUpperCase() ?? ''] ?? 'Cash',
+      reference: text(payment.reference),
+      status: text(payment.status),
+      by: text(payment.by),
+    })),
+    activity: (raw.activity ?? []).map((entry) => ({ at: entry.at ?? '', text: text(entry.text) })),
+    monthlyOrders: raw.monthlyOrders?.length ? raw.monthlyOrders : customer.monthlyOrders,
+    monthlySpend: raw.monthlySpend?.length ? raw.monthlySpend.map(amount) : customer.monthlySpend,
+    consent: raw.consent ? consentFromApi(raw.consent) : customer.consent,
+    corporate: raw.corporate
+      ? {
+          contact: text(raw.corporate.contact),
+          taxId: text(raw.corporate.taxId),
+          billingAddress: text(raw.corporate.billingAddress),
+          terms: text(raw.corporate.terms),
+          creditLimit: amount(raw.corporate.creditLimit),
+          contract: text(raw.corporate.contract),
+        }
+      : undefined,
+    archived: !!raw.archived,
   }
 }
 
-// The CustomerRequest body for a customer; `branchId` is the branch's uuid
+// The CustomerRequest body for a customer; `branchId` is the branch's uuid.
+// Notes and loyalty points are left out: they have their own endpoints
 export function customerRequest(customer: CrmCustomer, branchId: string): CustomerRequest {
   const address = customer.addresses.find(({ isDefault }) => isDefault) ?? customer.addresses[0]
+  const corporate = customer.kind === 'corporate'
+  // The backend keeps one channel per customer: the first one consented to
+  const channel = customer.consent.sms ? 'SMS' : customer.consent.whatsapp ? 'WHATSAPP' : 'EMAIL'
   return {
-    ...splitName(customer.name),
-    phoneNumber: customer.phone,
+    kind: customer.kind,
+    ...(corporate ? { companyName: customer.name } : splitCustomerName(customer.name)),
+    phone: customer.phone,
     email: customer.email,
+    status: customer.status,
     homeAddress: address?.street ?? '',
     neighbourhood: address?.landmark ?? '',
-    loyaltyPoints: customer.points,
-    branchId,
     referralSource: customer.referralSource,
+    preferredService: customer.preferredService,
+    archived: customer.archived,
+    branchId,
+    tags: customer.tags,
+    addresses: customer.addresses,
+    laundry: customer.laundry,
+    delivery: customer.delivery,
+    consent: { channel, marketing: customer.consent.marketing },
+    ...(corporate && customer.corporate ? { corporate: customer.corporate } : {}),
   }
+}
+
+// The body for a new customer: the opening points go in, and a status left at
+// 'new' is not sent, so the nightly rules keep it up to date
+export function newCustomerRequest(customer: CrmCustomer, branchId: string): CustomerRequest {
+  const { status, ...request } = customerRequest(customer, branchId)
+  return { ...request, ...(status && status !== 'new' ? { status } : {}), loyaltyPoints: customer.points }
 }
 
 // The CustomerRequest fields that differ between two versions, for a PATCH
 export function changedCustomerFields(before: CustomerRequest, after: CustomerRequest): Partial<CustomerRequest> {
   const changes: Partial<CustomerRequest> = {}
   for (const key of Object.keys(after) as (keyof CustomerRequest)[]) {
-    if (before[key] !== after[key]) Object.assign(changes, { [key]: after[key] })
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) Object.assign(changes, { [key]: after[key] })
   }
   return changes
 }

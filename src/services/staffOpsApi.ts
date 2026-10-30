@@ -76,7 +76,14 @@ const STAFF_TAG = { type: 'Staff' as const, id: 'OPS' }
 const USERS = { type: 'User' as const, id: 'LIST' }
 
 // Anything that changes a person's day also changes the staff lists
-const DAY_CHANGED = [STAFF_TAG, USERS, { type: 'Audit' as const, id: 'LIST' }]
+const DAY_CHANGED = [
+  STAFF_TAG,
+  USERS,
+  { type: 'Audit' as const, id: 'LIST' },
+  // The task and attendance lists in the staff drawer (see staffTeamApi)
+  { type: 'Staff' as const, id: 'TASKS' },
+  { type: 'Staff' as const, id: 'ATTENDANCE' },
+]
 
 export const staffOpsApi = api.injectEndpoints({
   endpoints: (build) => ({

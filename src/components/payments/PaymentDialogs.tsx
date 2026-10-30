@@ -83,7 +83,6 @@ export function RecordPaymentDialog({
   const open = receivables.filter((receivable) => getOutstanding(receivable) > 0)
   const initial = open.find(({ id }) => id === initialReceivableId)
   const [step, setStep] = useState(initial ? 1 : 0)
-  const [query, setQuery] = useState('')
   const [receivable, setReceivable] = useState<Receivable | null>(initial ?? null)
   const [amount, setAmount] = useState(initial ? String(getOutstanding(initial)) : '')
   const [method, setMethod] = useState<PayMethod>('Cash')
@@ -94,12 +93,6 @@ export function RecordPaymentDialog({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const needle = query.trim().toLowerCase()
-  const matches = open.filter(
-    ({ customer, orderId, phone }) =>
-      !needle ||
-      [customer, orderId, phone].some((field) => field.toLowerCase().includes(needle)),
-  )
   const outstanding = receivable ? getOutstanding(receivable) : 0
   const value = Number(amount) || 0
   const providers = configured.filter((item) => item.method === method && item.enabled)
@@ -111,10 +104,11 @@ export function RecordPaymentDialog({
     (!needsProvider || (provider !== '' && reference.trim() !== '')) &&
     change >= 0
 
-  function choose(next: Receivable) {
+  // Picking an order fills in the amount still owed; Continue moves on
+  function choose(id: string) {
+    const next = open.find((item) => item.id === id) ?? null
     setReceivable(next)
-    setAmount(String(getOutstanding(next)))
-    setStep(1)
+    setAmount(next ? String(getOutstanding(next)) : '')
   }
 
   async function confirm() {
@@ -173,6 +167,17 @@ export function RecordPaymentDialog({
                 Back
               </button>
             )}
+            {step === 0 && (
+              <button
+                type="button"
+                disabled={!receivable}
+                onClick={() => setStep(1)}
+                className={primaryButton}
+              >
+                Continue
+                <ArrowRight className="size-4" aria-hidden="true" />
+              </button>
+            )}
             {step === 1 && (
               <button
                 type="button"
@@ -197,47 +202,36 @@ export function RecordPaymentDialog({
       {step === 0 && (
         <div className="space-y-3">
           <div>
-            <label htmlFor="pay-search" className={labelClass}>
-              Find an order with a balance
+            <label htmlFor="pay-order" className={labelClass}>
+              Order with a balance
             </label>
-            <input
-              id="pay-search"
-              type="search"
+            <select
+              id="pay-order"
               autoFocus
-              placeholder="Order number / customer / phone"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              value={receivable?.id ?? ''}
+              onChange={(event) => choose(event.target.value)}
               className={fieldClass}
-            />
+            >
+              <option value="">
+                {open.length === 0 ? 'No unpaid or pending orders' : 'Choose an unpaid or pending order…'}
+              </option>
+              {open.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.orderId} · {item.customer} · {formatXaf(getOutstanding(item))} due
+                </option>
+              ))}
+            </select>
           </div>
-          <ul className="max-h-72 space-y-1.5 overflow-y-auto">
-            {matches.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => choose(item)}
-                  className={`${pickClass} bg-field hover:bg-brand/10`}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-ink">
-                      {item.customer}
-                    </span>
-                    <span className="block text-[11px] text-muted">
-                      {item.orderId} · total {formatXaf(item.total)} · paid {formatXaf(item.paid)}
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-bold text-ink tabular-nums">
-                    {formatXaf(getOutstanding(item))}
-                  </span>
-                </button>
-              </li>
-            ))}
-            {matches.length === 0 && (
-              <li className="rounded-lg bg-field px-3 py-6 text-center text-xs text-muted">
-                No order with an outstanding balance matches.
-              </li>
-            )}
-          </ul>
+          {receivable && (
+            <Summary
+              rows={[
+                ['Customer', receivable.customer],
+                ['Order total', formatXaf(receivable.total)],
+                ['Paid so far', formatXaf(receivable.paid)],
+                ['Outstanding', formatXaf(outstanding)],
+              ]}
+            />
+          )}
         </div>
       )}
 

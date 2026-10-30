@@ -7,7 +7,7 @@ import {
   Search,
   SlidersHorizontal,
 } from 'lucide-react'
-import { STOCK_STATUSES, SUPPLIERS } from '../../constants/inventory'
+import { STOCK_STATUSES } from '../../constants/inventory'
 import type { InventoryPermissions } from '../../constants/inventory'
 import type {
   InventoryFilters,
@@ -35,6 +35,8 @@ type InventoryTableProps = {
   searchRef: RefObject<HTMLInputElement | null>
   items: InventoryItem[]
   totalCount: number
+  // Supplier names to filter by
+  suppliers: string[]
   now: number
   filters: InventoryFilters
   filtersActive: boolean
@@ -68,6 +70,7 @@ function InventoryTable({
   searchRef,
   items,
   totalCount,
+  suppliers,
   now,
   filters,
   filtersActive,
@@ -128,7 +131,7 @@ function InventoryTable({
             className={select}
           >
             <option value="">All suppliers</option>
-            {SUPPLIERS.map(({ name }) => (
+            {suppliers.map((name) => (
               <option key={name}>{name}</option>
             ))}
           </select>

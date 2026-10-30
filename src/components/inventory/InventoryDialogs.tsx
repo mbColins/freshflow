@@ -6,11 +6,10 @@ import {
   ADJUSTMENT_REASONS,
   CONSUMPTION_REASONS,
   INVENTORY_CATEGORIES,
-  SUPPLIERS,
   UNITS,
 } from '../../constants/inventory'
-import { BRANCHES } from '../../constants/orders'
-import type { InventoryItem, MovementType } from '../../types/inventory'
+import type { SupplierRequest } from '../../services/purchasingApi'
+import type { InventoryItem, MovementType, Supplier } from '../../types/inventory'
 import {
   formatQty,
   getAvailable,
@@ -49,7 +48,7 @@ function ItemSelect({
       <option value="">Choose an item…</option>
       {items.map((item) => (
         <option key={item.id} value={item.id}>
-          {item.name} ({formatQty(item.stock, item.unit)})
+          {item.name}{item.branchName ? ` · ${item.branchName}` : ''} ({formatQty(item.stock, item.unit)})
         </option>
       ))}
     </select>
@@ -303,41 +302,49 @@ export function StockDialog({
 export type TransferInput = {
   itemId: string
   qty: number
-  // true = this branch receives stock from the other branch
-  incoming: boolean
-  otherBranch: string
+  // Destination branch uuid
+  toBranch: string
+  notes: string
 }
 
+// Ships stock from the item's branch to another branch. The stock leaves at
+// once; the other branch books it in when it arrives
 export function TransferDialog({
   items,
+  branches,
   initialItemId,
+  error,
+  busy,
   onClose,
   onCreate,
 }: {
   items: InventoryItem[]
+  // Every branch of the business
+  branches: { uuid: string; name: string }[]
   initialItemId: string
+  error: string | null
+  busy: boolean
   onClose: () => void
   onCreate: (input: TransferInput) => void
 }) {
-  const initial = items.find(({ id }) => id === initialItemId)
   const [itemId, setItemId] = useState(initialItemId)
-  // A shortage here is solved by pulling stock in
-  const [incoming, setIncoming] = useState(initial ? initial.stock <= initial.reorder : false)
-  const [otherBranch, setOtherBranch] = useState(BRANCHES[1])
+  const [toBranch, setToBranch] = useState('')
   const [quantity, setQuantity] = useState('')
+  const [notes, setNotes] = useState('')
 
   const item = items.find(({ id }) => id === itemId)
+  const destinations = branches.filter(({ uuid }) => uuid !== item?.branchId)
+  const destination = destinations.find(({ uuid }) => uuid === toBranch)
   const value = numeric(quantity)
   const free = item ? getAvailable(item) : 0
-  const valid = item !== undefined && value > 0 && (incoming || value <= free)
-  const from = incoming ? otherBranch : BRANCHES[0]
-  const to = incoming ? BRANCHES[0] : otherBranch
+  const valid = item !== undefined && destination !== undefined && value > 0 && value <= free
 
   return (
     <Modal
       open
       onClose={onClose}
       title="Stock Transfer"
+      subtitle="Send stock to another branch"
       footer={
         <>
           <button type="button" onClick={onClose} className={secondaryButton}>
@@ -345,39 +352,40 @@ export function TransferDialog({
           </button>
           <button
             type="button"
-            disabled={!valid}
-            onClick={() => item && onCreate({ itemId: item.id, qty: value, incoming, otherBranch })}
+            disabled={!valid || busy}
+            onClick={() => item && onCreate({ itemId: item.id, qty: value, toBranch, notes: notes.trim() })}
             className={primaryButton}
           >
-            Create Transfer
+            {busy ? 'Sending…' : 'Create Transfer'}
           </button>
         </>
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <FormField label="Item" htmlFor="transfer-item" wide>
-          <ItemSelect id="transfer-item" items={items} value={itemId} onChange={setItemId} />
+          <ItemSelect
+            id="transfer-item"
+            items={items}
+            value={itemId}
+            onChange={(next) => {
+              setItemId(next)
+              setToBranch('')
+            }}
+          />
         </FormField>
-        <FormField label="Direction" htmlFor="transfer-direction">
-          <select
-            id="transfer-direction"
-            value={incoming ? 'in' : 'out'}
-            onChange={(event) => setIncoming(event.target.value === 'in')}
-            className={fieldClass}
-          >
-            <option value="in">Receive into {BRANCHES[0]}</option>
-            <option value="out">Send from {BRANCHES[0]}</option>
-          </select>
-        </FormField>
-        <FormField label={incoming ? 'Source branch' : 'Destination branch'} htmlFor="transfer-branch">
+        <FormField label="Destination branch" htmlFor="transfer-branch">
           <select
             id="transfer-branch"
-            value={otherBranch}
-            onChange={(event) => setOtherBranch(event.target.value)}
+            value={toBranch}
+            onChange={(event) => setToBranch(event.target.value)}
+            disabled={!item}
             className={fieldClass}
           >
-            {BRANCHES.slice(1).map((branch) => (
-              <option key={branch}>{branch}</option>
+            <option value="">{item ? 'Choose a branch…' : 'Choose an item first'}</option>
+            {destinations.map(({ uuid, name }) => (
+              <option key={uuid} value={uuid}>
+                {name}
+              </option>
             ))}
           </select>
         </FormField>
@@ -392,18 +400,26 @@ export function TransferDialog({
             onChange={(event) => setQuantity(event.target.value)}
             className={fieldClass}
           />
-          {!incoming && item && value > free && (
+          {item && value > free && (
             <p className="mt-1 text-[11px] font-semibold text-danger">
-              Only {formatQty(free, item.unit)} is free to send.
+              Only {formatQty(free, item.unit)} is free to send; reserved stock cannot travel.
             </p>
           )}
         </FormField>
-        {item && value > 0 && (
+        <FormField label="Notes (optional)" htmlFor="transfer-notes" wide>
+          <input
+            id="transfer-notes"
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            className={fieldClass}
+          />
+        </FormField>
+        {item && destination && value > 0 && (
           <dl className="space-y-1 rounded-lg bg-field p-3 text-xs sm:col-span-2">
             {(
               [
-                ['From', from],
-                ['To', to],
+                ['From', item.branchName],
+                ['To', destination.name],
                 ['Item', item.name],
                 ['Quantity', formatQty(value, item.unit)],
               ] as [string, string][]
@@ -416,10 +432,14 @@ export function TransferDialog({
           </dl>
         )}
         <p className="text-[11px] text-muted sm:col-span-2">
-          {incoming
-            ? 'Stock is added here when the transfer is marked received.'
-            : 'Stock leaves this branch as soon as the transfer is created.'}
+          Stock leaves {item?.branchName || 'the source branch'} as soon as the transfer is created. The other branch
+          marks it received when it arrives.
         </p>
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger sm:col-span-2">
+            {error}
+          </p>
+        )}
       </div>
     </Modal>
   )
@@ -430,30 +450,51 @@ export function TransferDialog({
 type PoLine = { key: number; itemId: string; qty: string; unitCost: string }
 
 export type PurchaseOrderInput = {
-  supplier: string
+  supplierId: string
+  branchId: string
+  // yyyy-MM-dd
   expectedAt: string
+  notes: string
   lines: { itemId: string; qty: number; unitCost: number }[]
 }
 
 export function PurchaseOrderDialog({
   items,
+  suppliers,
+  branches,
   initialItemIds,
+  defaultBranch,
   showCosts,
+  error,
+  busy,
   onClose,
   onCreate,
 }: {
   items: InventoryItem[]
+  // Active suppliers
+  suppliers: Supplier[]
+  branches: { uuid: string; name: string }[]
   initialItemIds: string[]
+  defaultBranch: string
   showCosts: boolean
+  error: string | null
+  busy: boolean
   onClose: () => void
   onCreate: (input: PurchaseOrderInput) => void
 }) {
   const seeded = items.filter(({ id }) => initialItemIds.includes(id))
-  const [supplier, setSupplier] = useState(seeded[0]?.supplier ?? SUPPLIERS[0].name)
+  const [branchId, setBranchId] = useState(
+    seeded[0]?.branchId || defaultBranch || (branches.length === 1 ? branches[0].uuid : ''),
+  )
+  const seededHere = seeded.filter((item) => item.branchId === branchId)
+  const [supplierId, setSupplierId] = useState(
+    () => suppliers.find(({ name }) => name === seededHere[0]?.supplier)?.id ?? suppliers[0]?.id ?? '',
+  )
   const [expectedAt, setExpectedAt] = useState(() => inDays(2))
+  const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<PoLine[]>(() =>
-    seeded.length > 0
-      ? seeded.map((item, key) => ({
+    seededHere.length > 0
+      ? seededHere.map((item, key) => ({
           key,
           itemId: item.id,
           qty: String(getRecommendedOrder(item)),
@@ -463,6 +504,9 @@ export function PurchaseOrderDialog({
   )
   const [nextKey, setNextKey] = useState(lines.length)
 
+  // Every item on an order is stocked by the branch the order is for
+  const branchItems = items.filter((item) => item.branchId === branchId)
+  const supplier = suppliers.find(({ id }) => id === supplierId)
   const update = (key: number, patch: Partial<PoLine>) =>
     setLines(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)))
   const total = lines.reduce(
@@ -470,9 +514,11 @@ export function PurchaseOrderDialog({
     0,
   )
   const complete = lines.filter((line) => line.itemId && numeric(line.qty) > 0)
-  const otherSuppliers = complete.filter(
-    (line) => items.find(({ id }) => id === line.itemId)?.supplier !== supplier,
-  ).length
+  const duplicated = new Set(complete.map(({ itemId }) => itemId)).size !== complete.length
+  const otherSuppliers = complete.filter((line) => {
+    const itemSupplier = items.find(({ id }) => id === line.itemId)?.supplier
+    return itemSupplier && supplier && itemSupplier !== supplier.name
+  }).length
 
   return (
     <Modal
@@ -493,11 +539,13 @@ export function PurchaseOrderDialog({
           </button>
           <button
             type="button"
-            disabled={complete.length === 0 || !expectedAt}
+            disabled={complete.length === 0 || duplicated || !supplierId || !branchId || busy}
             onClick={() =>
               onCreate({
-                supplier,
-                expectedAt: new Date(expectedAt).toISOString(),
+                supplierId,
+                branchId,
+                expectedAt,
+                notes: notes.trim(),
                 lines: complete.map((line) => ({
                   itemId: line.itemId,
                   qty: numeric(line.qty),
@@ -507,23 +555,50 @@ export function PurchaseOrderDialog({
             }
             className={primaryButton}
           >
-            Create Purchase Order
+            {busy ? 'Saving…' : 'Create Purchase Order'}
           </button>
         </>
       }
     >
       <div className="space-y-4">
+        {suppliers.length === 0 && (
+          <p className="rounded-lg bg-warning/10 p-3 text-xs font-semibold text-warning">
+            There is no active supplier yet. Add one under Suppliers first.
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="Supplier" htmlFor="po-supplier">
             <select
               id="po-supplier"
-              value={supplier}
-              onChange={(event) => setSupplier(event.target.value)}
+              value={supplierId}
+              onChange={(event) => setSupplierId(event.target.value)}
               className={fieldClass}
             >
-              {SUPPLIERS.map(({ name, leadDays }) => (
-                <option key={name} value={name}>
-                  {name} ({leadDays}-day delivery)
+              {suppliers.map(({ id, name, leadTimeDays }) => (
+                <option key={id} value={id}>
+                  {name}
+                  {leadTimeDays > 0 ? ` (${leadTimeDays}-day delivery)` : ''}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Branch" htmlFor="po-branch">
+            <select
+              id="po-branch"
+              value={branchId}
+              onChange={(event) => {
+                setBranchId(event.target.value)
+                // The lines belonged to the other branch
+                setLines([{ key: nextKey, itemId: '', qty: '', unitCost: '' }])
+                setNextKey(nextKey + 1)
+              }}
+              disabled={branches.length <= 1}
+              className={fieldClass}
+            >
+              {branches.length !== 1 && <option value="">Choose a branch…</option>}
+              {branches.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
                 </option>
               ))}
             </select>
@@ -534,6 +609,14 @@ export function PurchaseOrderDialog({
               type="date"
               value={expectedAt}
               onChange={(event) => setExpectedAt(event.target.value)}
+              className={fieldClass}
+            />
+          </FormField>
+          <FormField label="Notes (optional)" htmlFor="po-notes">
+            <input
+              id="po-notes"
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
               className={fieldClass}
             />
           </FormField>
@@ -560,10 +643,11 @@ export function PurchaseOrderDialog({
                       unitCost: item ? String(item.unitCost) : line.unitCost,
                     })
                   }}
+                  disabled={!branchId}
                   className={`${fieldClass} bg-white`}
                 >
-                  <option value="">Choose an item…</option>
-                  {items.map((item) => (
+                  <option value="">{branchId ? 'Choose an item…' : 'Choose a branch first'}</option>
+                  {branchItems.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
                     </option>
@@ -624,10 +708,143 @@ export function PurchaseOrderDialog({
           <Plus className="size-4 text-muted" aria-hidden="true" />
           Add Item
         </button>
+        {duplicated && (
+          <p className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            An item can only be on the order once. Merge the lines.
+          </p>
+        )}
         {otherSuppliers > 0 && (
           <p className="rounded-lg bg-warning/10 p-3 text-xs font-semibold text-warning">
             {otherSuppliers} {otherSuppliers === 1 ? 'line is' : 'lines are'} usually bought
             from a different supplier. Check before sending this order.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            {error}
+          </p>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// ---------- Supplier ----------
+
+type SupplierValues = {
+  name: string
+  contactName: string
+  phone: string
+  email: string
+  address: string
+  paymentTerms: string
+  leadTimeDays: string
+  notes: string
+  active: boolean
+}
+
+// Adds a supplier, or edits one (`supplier` set). An inactive supplier cannot
+// take new purchase orders; one with orders can be deactivated, not deleted
+export function SupplierDialog({
+  supplier,
+  error,
+  busy,
+  onClose,
+  onSave,
+}: {
+  supplier: Supplier | null
+  error: string | null
+  busy: boolean
+  onClose: () => void
+  onSave: (changes: SupplierRequest) => void
+}) {
+  const [values, setValues] = useState<SupplierValues>({
+    name: supplier?.name ?? '',
+    contactName: supplier?.contactName ?? '',
+    phone: supplier?.phone ?? '',
+    email: supplier?.email ?? '',
+    address: supplier?.address ?? '',
+    paymentTerms: supplier?.paymentTerms ?? '',
+    leadTimeDays: supplier ? String(supplier.leadTimeDays) : '',
+    notes: supplier?.notes ?? '',
+    active: supplier?.active ?? true,
+  })
+  const set = (patch: Partial<SupplierValues>) => setValues({ ...values, ...patch })
+  const text = (key: Exclude<keyof SupplierValues, 'active'>, label: string, wide = false) => (
+    <FormField label={label} htmlFor={`supplier-${key}`} wide={wide}>
+      <input
+        id={`supplier-${key}`}
+        value={values[key]}
+        onChange={(event) => set({ [key]: event.target.value })}
+        className={fieldClass}
+      />
+    </FormField>
+  )
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={supplier ? 'Edit Supplier' : 'Add Supplier'}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!values.name.trim() || busy}
+            onClick={() =>
+              onSave({
+                name: values.name.trim(),
+                contactName: values.contactName.trim(),
+                phone: values.phone.trim(),
+                email: values.email.trim(),
+                address: values.address.trim(),
+                paymentTerms: values.paymentTerms.trim(),
+                leadTimeDays: numeric(values.leadTimeDays),
+                notes: values.notes.trim(),
+                active: values.active,
+              })
+            }
+            className={primaryButton}
+          >
+            {busy ? 'Saving…' : supplier ? 'Save Supplier' : 'Add Supplier'}
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        {text('name', 'Name', true)}
+        {text('contactName', 'Contact person')}
+        {text('phone', 'Phone')}
+        {text('email', 'Email')}
+        <FormField label="Delivery time (days)" htmlFor="supplier-leadTimeDays">
+          <input
+            id="supplier-leadTimeDays"
+            type="number"
+            min="0"
+            inputMode="numeric"
+            value={values.leadTimeDays}
+            onChange={(event) => set({ leadTimeDays: event.target.value })}
+            className={fieldClass}
+          />
+        </FormField>
+        {text('paymentTerms', 'Payment terms')}
+        {text('address', 'Address', true)}
+        {text('notes', 'Notes', true)}
+        <label className="flex cursor-pointer items-center gap-2 rounded-md bg-field px-3 py-2 text-xs font-semibold text-ink sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={values.active}
+            onChange={(event) => set({ active: event.target.checked })}
+            className="size-4 accent-brand"
+          />
+          Active (can be chosen on new purchase orders)
+        </label>
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger sm:col-span-2">
+            {error}
           </p>
         )}
       </div>
@@ -643,6 +860,7 @@ export function ItemWizard({
   existing,
   branches,
   defaultBranch,
+  suppliers,
   error,
   onClose,
   onCreate,
@@ -651,6 +869,8 @@ export function ItemWizard({
   // The branches the person may stock; one is chosen for the new item
   branches: { uuid: string; name: string }[]
   defaultBranch: string
+  // Supplier names to choose from
+  suppliers: string[]
   error?: string | null
   onClose: () => void
   onCreate: (item: InventoryItem) => void
@@ -669,7 +889,7 @@ export function ItemWizard({
     safety: 0,
     max: 0,
     unitCost: 0,
-    supplier: SUPPLIERS[0].name,
+    supplier: '',
     dailyUse: 0,
     batch: '',
     expiresAt: null,
@@ -863,7 +1083,8 @@ export function ItemWizard({
               onChange={(event) => patch({ supplier: event.target.value })}
               className={fieldClass}
             >
-              {SUPPLIERS.map(({ name }) => (
+              <option value="">No supplier</option>
+              {suppliers.map((name) => (
                 <option key={name}>{name}</option>
               ))}
             </select>

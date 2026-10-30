@@ -8,6 +8,7 @@ import {
   AttendanceDialog,
   FillShiftDialog,
   LeaveDialog,
+  ShiftDialog,
   StaffWizard,
 } from '../components/staff/StaffDialogs'
 import type {
@@ -52,6 +53,8 @@ import {
   useRecordAttendanceMutation,
   useRequestLeaveMutation,
 } from '../services/staffOpsApi'
+import { useCancelLeaveMutation, useCancelShiftMutation, useCreateShiftMutation } from '../services/staffTeamApi'
+import type { ShiftBody } from '../services/staffTeamApi'
 import { describeError } from '../utils/apiReasons'
 import useNow from '../hooks/useNow'
 import {
@@ -74,7 +77,7 @@ const ALL_USERS = { page: 0, size: 100, include: 'daily' as const }
 type DialogState =
   | { name: 'assign' | 'attendance'; staffId: string }
   | { name: 'fill'; shiftId: string }
-  | { name: 'leave' | 'add' }
+  | { name: 'leave' | 'add' | 'shift' }
 
 function StaffPage() {
   const now = useNow()
@@ -100,6 +103,9 @@ function StaffPage() {
   const [fillShift] = useFillShiftMutation()
   const [requestLeave] = useRequestLeaveMutation()
   const [decideLeave] = useDecideLeaveMutation()
+  const [createShift] = useCreateShiftMutation()
+  const [cancelShift] = useCancelShiftMutation()
+  const [cancelLeave] = useCancelLeaveMutation()
   const [createUser, { error: createError, isLoading: creating, reset: resetCreate }] = useCreateUserMutation()
   const [deleteUser] = useDeleteUserMutation()
   const [updateUser] = useUpdateUserMutation()
@@ -236,6 +242,40 @@ function StaffPage() {
       setToast('Leave request submitted for approval')
     } catch (error) {
       fail(error, 'The leave request wasn’t submitted.')
+    }
+  }
+
+  async function handleCreateShift(shift: ShiftBody) {
+    try {
+      await createShift(shift).unwrap()
+      setDialog(null)
+      setToast(shift.user ? 'Shift created and assigned' : 'Open shift published')
+    } catch (error) {
+      fail(error, 'The shift wasn’t created.')
+    }
+  }
+
+  function handleCancelShift(shiftId: string) {
+    const shift = openShifts.find(({ id }) => id === shiftId)
+    setConfirm({
+      title: `Cancel ${shift?.title ?? 'this shift'}?`,
+      body: 'The shift is removed from the schedule. If someone was on it, they are told.',
+      confirmLabel: 'Cancel Shift',
+      destructive: true,
+      onConfirm: () =>
+        cancelShift(shiftId)
+          .unwrap()
+          .then(() => setToast('Shift cancelled'))
+          .catch((error: unknown) => fail(error, 'The shift wasn’t cancelled.')),
+    })
+  }
+
+  async function handleCancelLeave(id: string) {
+    try {
+      await cancelLeave(id).unwrap()
+      setToast('Leave request withdrawn')
+    } catch (error) {
+      fail(error, 'The request wasn’t withdrawn.')
     }
   }
 
@@ -523,6 +563,8 @@ function StaffPage() {
         canManage={permissions.manage}
         onOpen={setOpenId}
         onFillShift={(shiftId) => setDialog({ name: 'fill', shiftId })}
+        onCancelShift={handleCancelShift}
+        onNewShift={() => setDialog({ name: 'shift' })}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -534,6 +576,7 @@ function StaffPage() {
           staff={staff}
           canManage={permissions.manage}
           onDecide={(id, approve) => void handleLeaveDecision(id, approve)}
+          onCancel={(id) => void handleCancelLeave(id)}
           onRequest={() => setDialog({ name: 'leave' })}
         />
       </div>
@@ -596,6 +639,9 @@ function StaffPage() {
           onClose={() => setDialog(null)}
           onFill={(shiftId, staffId) => void handleFillShift(shiftId, staffId)}
         />
+      )}
+      {dialog?.name === 'shift' && (
+        <ShiftDialog staff={staff} onClose={() => setDialog(null)} onCreate={(shift) => void handleCreateShift(shift)} />
       )}
       {dialog?.name === 'leave' && (
         <LeaveDialog staff={staff} onClose={() => setDialog(null)} onSubmit={(input) => void handleLeave(input)} />

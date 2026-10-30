@@ -68,24 +68,51 @@ export type Movement = {
 }
 
 export type PurchaseOrder = {
+  // The order's uuid
   id: string
+  // PO-2026-0018
+  code: string
+  supplierId: string
   supplier: string
-  lines: { itemId: string; qty: number; unitCost: number }[]
+  branchId: string
+  branchName: string
+  lines: { itemId: string; itemName: string; unit: string; qty: number; received: number; unitCost: number }[]
   createdAt: string
+  // yyyy-MM-dd
   expectedAt: string
+  notes: string
   status: PoStatus
   createdBy: string
 }
 
 export type StockTransfer = {
+  // The transfer's uuid
   id: string
+  // TRF-0042
+  code: string
   itemId: string
+  itemName: string
+  unit: string
   from: string
   to: string
   qty: number
   status: TransferStatus
   requestedBy: string
+  receivedBy: string
   at: string
+}
+
+export type Supplier = {
+  id: string
+  name: string
+  contactName: string
+  phone: string
+  email: string
+  address: string
+  paymentTerms: string
+  leadTimeDays: number
+  active: boolean
+  notes: string
 }
 
 export type InventoryFilters = {

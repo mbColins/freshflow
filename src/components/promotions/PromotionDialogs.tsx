@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Copy, Pause, Pencil, Play, Calculator } from 'lucide-react'
-import { BRANCH_SERVICES } from '../../constants/branches'
+import { useServiceNames } from '../../hooks/usePromotions'
+import { useListAuditQuery } from '../../services/auditApi'
 import {
   ASSUMED_GROSS_MARGIN,
   AUDIENCES,
@@ -206,8 +207,22 @@ export function PromotionDrawer({
         )}
 
         {tab === 'history' && (
+          <PromotionHistory id={promotion.id} />
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// What was done to the promotion, newest first, from the audit trail
+function PromotionHistory({ id }: { id: string }) {
+  const audit = useListAuditQuery({ entityType: 'PROMOTION', entity: id, page: 0, size: 50 })
+  const history = (audit.data?.items ?? []).map(({ summary, action, actor, at }) => ({ text: summary || action, user: actor, at }))
+  if (audit.isLoading) return <p className="text-xs text-muted">Loading the history…</p>
+  if (history.length === 0) return <p className="text-xs text-muted">No changes recorded yet.</p>
+  return (
           <ol className="space-y-3 border-l border-line pl-4">
-            {promotion.history.map((event, index) => (
+            {history.map((event, index) => (
               <li key={`${event.at}-${index}`} className="relative text-xs">
                 <span className="absolute top-1 -left-[21px] size-2.5 rounded-full bg-brand ring-2 ring-white" aria-hidden="true" />
                 <p className="font-semibold text-ink">{event.text}</p>
@@ -217,9 +232,6 @@ export function PromotionDrawer({
               </li>
             ))}
           </ol>
-        )}
-      </div>
-    </Modal>
   )
 }
 
@@ -316,7 +328,9 @@ export function DiscountSimulator({
   const [basket, setBasket] = useState(25_000)
   const [audience, setAudience] = useState<Audience>('all')
   const [branch, setBranch] = useState(branches[0]?.id ?? '')
-  const [service, setService] = useState(BRANCH_SERVICES[0].name)
+  const serviceNames = useServiceNames()
+  const [chosenService, setService] = useState('')
+  const service = chosenService || serviceNames[0] || ''
   const [delivery, setDelivery] = useState(true)
   const promotion = options.find(({ id }) => id === promotionId) ?? options[0]
 
@@ -358,7 +372,7 @@ export function DiscountSimulator({
           </div>
           {select('sim-audience', 'Customer', audience, (value) => setAudience(value as Audience), AUDIENCES.filter(({ value }) => value !== 'specific').map(({ value, label }) => [value, value === 'all' ? 'Regular customer' : label]))}
           {select('sim-branch', 'Branch', branch, setBranch, branches.map(({ id, name }) => [id, name]))}
-          {select('sim-service', 'Service', service, setService, BRANCH_SERVICES.map(({ name }) => [name, name]))}
+          {select('sim-service', 'Service', service, setService, serviceNames.map((name) => [name, name]))}
           <label className="flex cursor-pointer items-center gap-2 self-end rounded-md bg-field px-3 py-2 text-xs font-medium text-ink">
             <input type="checkbox" checked={delivery} onChange={(event) => setDelivery(event.target.checked)} className="size-4 accent-brand" />
             Pickup &amp; delivery ({formatXaf(DELIVERY_FEE)})

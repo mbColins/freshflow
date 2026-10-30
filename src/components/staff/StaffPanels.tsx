@@ -327,11 +327,15 @@ export function ShiftRoster({
   canManage,
   onOpen,
   onFillShift,
+  onCancelShift,
+  onNewShift,
 }: Shared & {
   openShifts: OpenShift[]
   canManage: boolean
   onOpen: (id: string) => void
   onFillShift: (shiftId: string) => void
+  onCancelShift: (shiftId: string) => void
+  onNewShift: () => void
 }) {
   const scheduled = staff
     .filter(({ shiftStart }) => shiftStart)
@@ -349,6 +353,13 @@ export function ShiftRoster({
       title="Today’s Shift Schedule"
       subtitle={`${scheduled.length} scheduled · ${openShifts.length} open ${openShifts.length === 1 ? 'shift' : 'shifts'}`}
       icon={CalendarClock}
+      action={
+        canManage && (
+          <button type="button" onClick={onNewShift} className={`${smallButton} font-bold`}>
+            + New Shift
+          </button>
+        )
+      }
     >
       <div className="overflow-x-auto">
         <div className="min-w-[560px]">
@@ -397,13 +408,22 @@ export function ShiftRoster({
                   >
                     {shift.start}–{shift.end}
                     {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => onFillShift(shift.id)}
-                        className="rounded-sm font-bold underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
-                      >
-                        Fill
-                      </button>
+                      <span className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onFillShift(shift.id)}
+                          className="rounded-sm font-bold underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                        >
+                          Fill
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onCancelShift(shift.id)}
+                          className="rounded-sm font-bold underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                        >
+                          Cancel
+                        </button>
+                      </span>
                     )}
                   </div>
                 </div>
@@ -560,12 +580,14 @@ export function LeavePanel({
   staff,
   canManage,
   onDecide,
+  onCancel,
   onRequest,
 }: {
   requests: LeaveRequest[]
   staff: StaffMember[]
   canManage: boolean
   onDecide: (id: string, approve: boolean) => void
+  onCancel: (id: string) => void
   onRequest: () => void
 }) {
   return (
@@ -597,21 +619,28 @@ export function LeavePanel({
                   {formatDate(request.from)} to {formatDate(request.to)} · {request.reason}
                   {request.approver && ` · decided by ${request.approver}`}
                 </p>
-                {canManage && request.status === 'Pending' && (
+                {request.status === 'Pending' && (
                   <div className="mt-2 flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onDecide(request.id, true)}
-                      className={`${smallButton} font-bold`}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDecide(request.id, false)}
-                      className={smallButton}
-                    >
-                      Reject
+                    {canManage && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onDecide(request.id, true)}
+                          className={`${smallButton} font-bold`}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDecide(request.id, false)}
+                          className={smallButton}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    <button type="button" onClick={() => onCancel(request.id)} className={`${smallButton} text-danger`}>
+                      Withdraw
                     </button>
                   </div>
                 )}

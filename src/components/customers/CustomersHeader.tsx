@@ -1,4 +1,5 @@
 import {
+  Copy,
   Download,
   Ellipsis,
   FileDown,
@@ -25,6 +26,7 @@ type CustomersHeaderProps = {
   onImport: () => void
   onExport: () => void
   onCampaign: () => void
+  onDuplicates: () => void
 }
 
 function CustomersHeader({
@@ -37,6 +39,7 @@ function CustomersHeader({
   onImport,
   onExport,
   onCampaign,
+  onDuplicates,
 }: CustomersHeaderProps) {
   return (
     <div className="space-y-3">
@@ -94,15 +97,26 @@ function CustomersHeader({
               triggerClassName={`${secondaryButton} w-9 px-0`}
             >
               {(close) => (
-                <MenuItem
-                  onSelect={() => {
-                    close()
-                    onCampaign()
-                  }}
-                >
-                  <Megaphone className="size-4 text-muted" aria-hidden="true" />
-                  Send campaign…
-                </MenuItem>
+                <>
+                  <MenuItem
+                    onSelect={() => {
+                      close()
+                      onCampaign()
+                    }}
+                  >
+                    <Megaphone className="size-4 text-muted" aria-hidden="true" />
+                    Send campaign…
+                  </MenuItem>
+                  <MenuItem
+                    onSelect={() => {
+                      close()
+                      onDuplicates()
+                    }}
+                  >
+                    <Copy className="size-4 text-muted" aria-hidden="true" />
+                    Find duplicates…
+                  </MenuItem>
+                </>
               )}
             </Menu>
           )}

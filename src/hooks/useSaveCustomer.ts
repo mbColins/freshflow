@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useCreateCustomerMutation, useUpdateCustomerMutation } from '../services/customerApi'
 import type { CrmCustomer } from '../types/customer'
 import { saveFailureMessage } from '../utils/apiErrors'
-import { changedCustomerFields, customerRequest } from '../utils/customers'
+import { changedCustomerFields, customerRequest, newCustomerRequest } from '../utils/customers'
 import { useBranchLookup, useChangeCustomers } from './useCustomers'
 
 type SaveResult = { ok: true; id: string | null } | { ok: false }
@@ -28,7 +28,7 @@ export default function useSaveCustomer() {
     try {
       if (!before) {
         // The list reloads on its own to show the new customer
-        const id = await createCustomer(customerRequest(after, branchId)).unwrap()
+        const id = await createCustomer(newCustomerRequest(after, branchId)).unwrap()
         return { ok: true, id }
       }
       const changes = changedCustomerFields(

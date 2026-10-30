@@ -279,22 +279,37 @@ export function CustomerImportDialog({
 
 // ---------- Campaign ----------
 
-const CHANNELS: { label: string; consent: keyof Consent }[] = [
-  { label: 'SMS', consent: 'sms' },
-  { label: 'WhatsApp', consent: 'whatsapp' },
-  { label: 'Email', consent: 'email' },
+const CHANNELS: { label: string; consent: keyof Consent; api: 'SMS' | 'WHATSAPP' | 'EMAIL' }[] = [
+  { label: 'SMS', consent: 'sms', api: 'SMS' },
+  { label: 'WhatsApp', consent: 'whatsapp', api: 'WHATSAPP' },
+  { label: 'Email', consent: 'email', api: 'EMAIL' },
 ]
+
+// Who a campaign goes to: customer uuids, or a segment the server resolves
+export type CampaignTarget = { customers: string[]; segment?: undefined } | { segment: string; customers?: undefined }
+
+export type CampaignRequest = {
+  target: CampaignTarget
+  channel: 'SMS' | 'WHATSAPP' | 'EMAIL'
+  message: string
+  // ISO local date time, empty to send now
+  scheduledFor: string
+}
 
 export function CampaignDialog({
   customers,
   selected,
   onClose,
+  busy,
+  error,
   onSend,
 }: {
   customers: CrmCustomer[]
   selected: CrmCustomer[]
   onClose: () => void
-  onSend: (recipients: number, channel: string, scheduled: boolean) => void
+  busy: boolean
+  error: string | null
+  onSend: (request: CampaignRequest) => void
 }) {
   const [audience, setAudience] = useState(selected.length > 0 ? 'selected' : 'all')
   const [channel, setChannel] = useState(CHANNELS[0])
@@ -334,11 +349,22 @@ export function CampaignDialog({
           </button>
           <button
             type="button"
-            disabled={!canSend}
-            onClick={() => onSend(recipients.length, channel.label, sendAt !== '')}
+            disabled={!canSend || busy}
+            onClick={() =>
+              onSend({
+                // The server applies each customer's consent and chosen channel
+                target:
+                  audience === 'selected' || audience === 'all'
+                    ? { customers: pool.map(({ id }) => id) }
+                    : { segment: audience },
+                channel: channel.api,
+                message: message.trim(),
+                scheduledFor: sendAt ? `${sendAt}:00` : '',
+              })
+            }
             className={primaryButton}
           >
-            {sendAt ? 'Schedule' : 'Send Now'}
+            {busy ? 'Sending…' : sendAt ? 'Schedule' : 'Send Now'}
           </button>
         </>
       }
@@ -428,6 +454,11 @@ export function CampaignDialog({
           Customers who have not consented to marketing on this channel, and
           suspended accounts, are left out.
         </p>
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger/10 p-3 text-xs font-semibold text-danger">
+            {error}
+          </p>
+        )}
       </div>
     </Modal>
   )

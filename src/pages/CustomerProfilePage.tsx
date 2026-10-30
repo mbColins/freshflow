@@ -48,7 +48,12 @@ import Menu, { MenuItem } from '../components/ui/Menu'
 import { CUSTOMER_PERMISSIONS, CUSTOMER_TAGS } from '../constants/customers'
 import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
 import { useChangeCustomers, useCustomersQuery } from '../hooks/useCustomers'
-import { useDeleteCustomerMutation, useGetCustomerQuery } from '../services/customerApi'
+import {
+  useAddCustomerNoteMutation,
+  useAdjustLoyaltyMutation,
+  useDeleteCustomerMutation,
+  useGetCustomerQuery,
+} from '../services/customerApi'
 import { saveFailureMessage } from '../utils/apiErrors'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
@@ -92,6 +97,8 @@ function CustomerProfilePage() {
   const customer = single.data ? { ...single.data, branch: single.data.branch || listed?.branch || '' } : listed
   const changeCustomers = useChangeCustomers()
   const [deleteCustomer] = useDeleteCustomerMutation()
+  const [addNote] = useAddCustomerNoteMutation()
+  const [adjustLoyalty] = useAdjustLoyaltyMutation()
   const [role] = useLocalStorage<OrderRole>('customers.role', 'manager')
   const [tab, setTab] = useState('overview')
   const [dialog, setDialog] = useState<DialogState | null>(null)
@@ -137,10 +144,6 @@ function CustomerProfilePage() {
       if (refused) setToast('The change wasn’t saved. The server refused it, try again.')
     })
   }
-  const logged = (current: CrmCustomer, text: string): CrmCustomer => ({
-    ...current,
-    activity: [{ at: new Date().toISOString(), text }, ...current.activity],
-  })
   const suspended = customer.status === 'suspended'
   const tabs = TABS.filter(({ financial }) => permissions.financials || !financial)
   const activeTab = tabs.find(({ id }) => id === tab) ?? tabs[0]
@@ -179,7 +182,7 @@ function CustomerProfilePage() {
       confirmLabel: 'Suspend Customer',
       destructive: true,
       onConfirm: () => {
-        change((current) => logged({ ...current, status: 'suspended' }, 'Account suspended'))
+        change((current) => ({ ...current, status: 'suspended' }))
         setToast('Customer suspended')
       },
     })
@@ -367,9 +370,7 @@ function CustomerProfilePage() {
                       {permissions.manage &&
                         (suspended
                           ? item('Reactivate Customer', UserCheck, () => {
-                              change((current) =>
-                                logged({ ...current, status: 'active' }, 'Account reactivated'),
-                              )
+                              change((current) => ({ ...current, status: 'active' }))
                               setToast('Customer reactivated')
                             })
                           : item('Suspend Customer', Ban, requestSuspend, true))}
@@ -471,20 +472,13 @@ function CustomerProfilePage() {
       {dialog?.name === 'note' && (
         <NoteDialog
           onClose={() => setDialog(null)}
-          onSave={(text) => {
-            change((current) => ({
-              ...current,
-              notes: [
-                {
-                  id: `note-${Date.now()}`,
-                  text,
-                  by: CURRENT_USER,
-                  at: new Date().toISOString(),
-                },
-                ...current.notes,
-              ],
-            }))
-            setDialog(null)
+          onSave={async (text) => {
+            try {
+              await addNote({ id: customer.id, text }).unwrap()
+              setDialog(null)
+            } catch (error) {
+              setToast(saveFailureMessage(error, 'The note wasn’t saved.'))
+            }
           }}
         />
       )}
@@ -492,14 +486,14 @@ function CustomerProfilePage() {
         <PointsDialog
           customer={customer}
           onClose={() => setDialog(null)}
-          onSave={(delta, reason) => {
-            change((current) =>
-              logged(
-                { ...current, points: current.points + delta },
-                `Loyalty points adjusted by ${delta > 0 ? '+' : ''}${delta} (${reason})`,
-              ),
-            )
-            setDialog(null)
+          onSave={async (delta, reason) => {
+            try {
+              await adjustLoyalty({ id: customer.id, points: delta, reason }).unwrap()
+              setDialog(null)
+              setToast(`Loyalty points adjusted by ${delta > 0 ? '+' : ''}${delta}`)
+            } catch (error) {
+              setToast(saveFailureMessage(error, 'The points weren’t adjusted.', 'The balance can’t go below 0.'))
+            }
           }}
         />
       )}

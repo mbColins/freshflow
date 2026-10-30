@@ -59,14 +59,6 @@ export const ADJUSTMENT_REASONS = [
 // An adjustment bigger than this share of the system quantity needs a manager
 export const ADJUSTMENT_APPROVAL_RATIO = 0.1
 
-// Placeholder supplier directory until suppliers have their own records
-export const SUPPLIERS = [
-  { name: 'SolvChem West Africa', contact: 'orders@solvchem.example', leadDays: 2, onTime: 94, fulfilment: 98 },
-  { name: 'AfriClean Pro Douala', contact: 'sales@africlean.example', leadDays: 1, onTime: 97, fulfilment: 99 },
-  { name: 'PackPoly Douala', contact: 'dispatch@packpoly.example', leadDays: 1, onTime: 88, fulfilment: 95 },
-  { name: 'Douala Metalwork SARL', contact: 'contracts@metalwork.example', leadDays: 5, onTime: 91, fulfilment: 100 },
-]
-
 // Sample figures until service recipes and metering feed this
 export const CONSUMPTION_VARIANCE = [
   { service: 'Wash & Fold', recipe: '20 ml / kg heavy liquid detergent · 62 loads', expected: 7.4, actual: 7.4, unit: 'L' },

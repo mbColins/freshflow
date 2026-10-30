@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, TriangleAlert } from 'lucide-react'
 import {
+  DEPARTMENT_CODES,
   DEPARTMENTS,
   EMPLOYMENT_TYPES,
   LEAVE_TYPES,
   PERMISSION_MODULES,
   ROLE_TEMPLATES,
+  SKILL_CODES,
   SKILLS,
   SKILL_LEVELS,
   TASK_TYPES,
@@ -18,6 +20,8 @@ import type {
 } from '../../types/staff'
 import { USER_TYPES } from '../../constants/users'
 import { useGetBranchDropdownQuery } from '../../services/branchApi'
+import { useRecommendStaffQuery } from '../../services/staffTeamApi'
+import type { ShiftBody } from '../../services/staffTeamApi'
 import { useGetRoleDropdownQuery } from '../../services/userApi'
 import type { UserType, Weekday } from '../../types/user'
 import { toLocalInput } from '../../utils/dates'
@@ -55,7 +59,29 @@ export function AssignWorkDialog({
   const [task, setTask] = useState(TASK_TYPES[0])
   const [reference, setReference] = useState('')
   const [staffId, setStaffId] = useState(initialStaffId)
-  const ranked = recommendStaff(staff, task.skill)
+  // The server ranks on duty first, then skill, then least loaded; until it
+  // answers (or if it refuses), the page's own ranking stands in
+  const server = useRecommendStaffQuery({ skill: SKILL_CODES[task.skill] })
+  const local = recommendStaff(staff, task.skill)
+  const ranked = server.data
+    ? server.data.flatMap((candidate) => {
+        const member = staff.find(({ id }) => id === candidate.id)
+        return member
+          ? [
+              {
+                member,
+                // No score from the server: the order is the recommendation
+                match: null as number | null,
+                reasons: [
+                  candidate.skillLevel ? `${task.skill}: ${candidate.skillLevel.toLowerCase()}` : `No ${task.skill} skill on record`,
+                  candidate.onDuty ? 'On duty' : 'Not clocked in',
+                  `${Math.round(candidate.load * 100)}% of today’s capacity`,
+                ],
+              },
+            ]
+          : []
+      })
+    : local.map((entry) => ({ ...entry, match: entry.match as number | null }))
 
   return (
     <Modal
@@ -136,9 +162,11 @@ export function AssignWorkDialog({
                         {reasons.join(' · ')}
                       </span>
                     </span>
-                    <span className="shrink-0 text-sm font-bold text-ink tabular-nums">
-                      {match}%
-                    </span>
+                    {match !== null && (
+                      <span className="shrink-0 text-sm font-bold text-ink tabular-nums">
+                        {match}%
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}
@@ -992,6 +1020,128 @@ export function StaffWizard({
           )}
         </div>
       )}
+    </Modal>
+  )
+}
+
+// ---------- New shift ----------
+
+const todayIso = () => new Date().toISOString().slice(0, 10)
+
+// An open shift, or one given to a person straight away
+export function ShiftDialog({
+  staff,
+  onClose,
+  onCreate,
+}: {
+  staff: StaffMember[]
+  onClose: () => void
+  onCreate: (shift: ShiftBody) => void
+}) {
+  const { data: branches = [] } = useGetBranchDropdownQuery()
+  const [shiftTitle, setShiftTitle] = useState('')
+  const [department, setDepartment] = useState(Object.keys(DEPARTMENT_CODES)[0])
+  const [skill, setSkill] = useState('Washing')
+  const [workDate, setWorkDate] = useState(todayIso)
+  const [startTime, setStartTime] = useState('08:00')
+  const [endTime, setEndTime] = useState('17:00')
+  const [userId, setUserId] = useState('')
+  const [branch, setBranch] = useState('')
+  const branchId = branch || (branches.length === 1 ? branches[0].uuid : '')
+  const valid = shiftTitle.trim() !== '' && workDate !== '' && startTime < endTime && (branches.length <= 1 || branchId !== '')
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="New Shift"
+      subtitle="Leave the person empty to publish it as an open shift."
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryButton}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!valid}
+            onClick={() =>
+              onCreate({
+                title: shiftTitle.trim(),
+                department: DEPARTMENT_CODES[department],
+                skill: SKILL_CODES[skill],
+                workDate,
+                startTime,
+                endTime,
+                ...(userId ? { user: userId } : {}),
+                ...(branchId ? { branch: branchId } : {}),
+              })
+            }
+            className={primaryButton}
+          >
+            Create Shift
+          </button>
+        </>
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FormField label="Title" htmlFor="shift-title" wide>
+          <input
+            id="shift-title"
+            placeholder="e.g. Evening wash shift"
+            value={shiftTitle}
+            onChange={(event) => setShiftTitle(event.target.value)}
+            className={fieldClass}
+          />
+        </FormField>
+        <FormField label="Department" htmlFor="shift-department">
+          <select id="shift-department" value={department} onChange={(event) => setDepartment(event.target.value)} className={fieldClass}>
+            {Object.keys(DEPARTMENT_CODES).map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Skill needed" htmlFor="shift-skill">
+          <select id="shift-skill" value={skill} onChange={(event) => setSkill(event.target.value)} className={fieldClass}>
+            {Object.keys(SKILL_CODES).map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Date" htmlFor="shift-date">
+          <input id="shift-date" type="date" value={workDate} onChange={(event) => setWorkDate(event.target.value)} className={fieldClass} />
+        </FormField>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField label="Starts" htmlFor="shift-start">
+            <input id="shift-start" type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className={fieldClass} />
+          </FormField>
+          <FormField label="Ends" htmlFor="shift-end">
+            <input id="shift-end" type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className={fieldClass} />
+          </FormField>
+        </div>
+        {branches.length > 1 && (
+          <FormField label="Branch" htmlFor="shift-branch">
+            <select id="shift-branch" value={branch} onChange={(event) => setBranch(event.target.value)} className={fieldClass}>
+              <option value="">Choose a branch…</option>
+              {branches.map(({ uuid, name }) => (
+                <option key={uuid} value={uuid}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        )}
+        <FormField label="Person (optional)" htmlFor="shift-user">
+          <select id="shift-user" value={userId} onChange={(event) => setUserId(event.target.value)} className={fieldClass}>
+            <option value="">Open shift</option>
+            {staff.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        {startTime >= endTime && <p className="text-[11px] font-semibold text-danger sm:col-span-2">The shift must end after it starts.</p>}
+      </div>
     </Modal>
   )
 }

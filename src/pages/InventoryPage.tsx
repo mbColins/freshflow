@@ -12,6 +12,7 @@ import {
   ItemWizard,
   PurchaseOrderDialog,
   StockDialog,
+  SupplierDialog,
   TransferDialog,
 } from '../components/inventory/InventoryDialogs'
 import type {
@@ -50,11 +51,24 @@ import {
   useUpdateInventoryItemMutation,
 } from '../services/inventoryApi'
 import type { StockMovementRequest } from '../services/inventoryApi'
+import {
+  useCancelTransferMutation,
+  useCreatePurchaseOrderMutation,
+  useCreateSupplierMutation,
+  useCreateTransferMutation,
+  useListPurchaseOrdersQuery,
+  useListSuppliersQuery,
+  useListTransfersQuery,
+  useReceivePurchaseOrderMutation,
+  useReceiveTransferMutation,
+  useSetPurchaseOrderStatusMutation,
+  useUpdateSupplierMutation,
+} from '../services/purchasingApi'
+import type { PoTargetStatus, SupplierRequest } from '../services/purchasingApi'
 import type {
   InventoryFilters,
   InventoryItem,
-  PurchaseOrder,
-  StockTransfer,
+  Supplier,
 } from '../types/inventory'
 import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from '../utils/apiErrors'
 import {
@@ -70,6 +84,7 @@ const TOAST_MS = 4000
 const ALL_ITEMS = { page: 0, size: 500 }
 const RECENT_MOVEMENTS = { page: 0, size: 200 }
 const NO_ITEMS: InventoryItem[] = []
+const NO_SUPPLIERS: Supplier[] = []
 
 const failure = (error: unknown, rejected: string) =>
   serverMessage(error) ?? errorMessage(error as Parameters<typeof errorMessage>[0], rejected) ?? NETWORK_ERROR_MESSAGE
@@ -94,6 +109,7 @@ type DialogState =
   | { name: 'stock'; action: StockAction; itemId: string }
   | { name: 'transfer'; itemId: string }
   | { name: 'po'; itemIds: string[] }
+  | { name: 'supplier'; supplier: Supplier | null }
   | { name: 'item' }
 
 // Most urgent statuses first in the table
@@ -101,7 +117,7 @@ const STATUS_ORDER = ['out', 'expired', 'critical', 'low', 'expiring', 'overstoc
 
 function InventoryPage() {
   const now = useNow()
-  const { name: actor, can } = useCurrentUser()
+  const { can } = useCurrentUser()
   const [branch, setBranch] = useState('')
   const { data: branches = [] } = useGetBranchDropdownQuery()
   const itemsQuery = useListInventoryItemsQuery({ ...ALL_ITEMS, ...(branch ? { branch } : {}) })
@@ -111,10 +127,9 @@ function InventoryPage() {
   const [recordMovement] = useRecordStockMovementMutation()
   const [updateItem] = useUpdateInventoryItemMutation()
   const [createItem, { error: createError, reset: resetCreate }] = useCreateInventoryItemMutation()
-  // The server has no purchase orders or transfers yet, so these live only
-  // until the page is left. Receiving an order does record real stock
-  const [orders, setOrders] = useState<PurchaseOrder[]>([])
-  const [transfers, setTransfers] = useState<StockTransfer[]>([])
+  const [dialogError, setDialogError] = useState<string | null>(null)
+  // The transfer or order a request is in flight for
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [filters, setFilters] = useState<InventoryFilters>(EMPTY_INVENTORY_FILTERS)
   const [openItemId, setOpenItemId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<DialogState | null>(null)
@@ -129,6 +144,25 @@ function InventoryPage() {
     consume: manage,
     manage,
   }
+  const branchFilter = branch ? { branch } : {}
+  const transfersQuery = useListTransfersQuery({ size: 50, ...branchFilter })
+  const ordersQuery = useListPurchaseOrdersQuery(branchFilter)
+  // Suppliers are for managers and the owner only
+  const suppliersQuery = useListSuppliersQuery(undefined, { skip: !manage })
+  const suppliers = suppliersQuery.data ?? NO_SUPPLIERS
+  const transfers = transfersQuery.data ?? []
+  const orders = ordersQuery.data ?? []
+  const supplierNames = [...new Set([...suppliers.map(({ name }) => name), ...items.map(({ supplier }) => supplier)])]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+  const [createTransfer, transferStatus] = useCreateTransferMutation()
+  const [receiveTransfer] = useReceiveTransferMutation()
+  const [cancelTransfer] = useCancelTransferMutation()
+  const [createOrder, orderStatus] = useCreatePurchaseOrderMutation()
+  const [setOrderStatus] = useSetPurchaseOrderStatusMutation()
+  const [receiveOrder] = useReceivePurchaseOrderMutation()
+  const [createSupplier, createSupplierStatus] = useCreateSupplierMutation()
+  const [updateSupplier, updateSupplierStatus] = useUpdateSupplierMutation()
   const filtered = items
     .filter((item) => matchesInventoryFilters(item, filters, now))
     .sort(
@@ -191,62 +225,94 @@ function InventoryPage() {
     }
   }
 
-  // Not stored yet: the record stays on this page and stock isn't moved
-  function handleTransfer(input: TransferInput) {
-    const id = `TRF-${String(transfers.length + 1).padStart(4, '0')}`
-    const mine = items.find((item) => item.id === input.itemId)?.branchName ?? ''
-    setTransfers([
-      {
-        id,
-        itemId: input.itemId,
-        from: input.incoming ? input.otherBranch : mine,
-        to: input.incoming ? mine : input.otherBranch,
-        qty: input.qty,
-        status: 'In Transit',
-        requestedBy: actor,
-        at: new Date().toISOString(),
-      },
-      ...transfers,
-    ])
+  const closeDialog = () => {
     setDialog(null)
-    setToast(`Transfer ${id} noted. Transfers aren’t stored or applied to stock yet.`)
+    setDialogError(null)
   }
 
-  function handleReceiveTransfer(id: string) {
-    setTransfers(transfers.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)))
-    setToast(`Transfer ${id} marked received. Stock wasn’t changed.`)
-  }
-
-  function handleCreateOrder(input: PurchaseOrderInput) {
-    const id = `PO-${String(orders.length + 1).padStart(4, '0')}`
-    setOrders([
-      {
-        id,
-        ...input,
-        createdAt: new Date().toISOString(),
-        status: 'Draft',
-        createdBy: actor,
-      },
-      ...orders,
-    ])
-    setDialog(null)
-    setToast(`${id} saved as a draft on this page; purchase orders aren’t stored yet`)
-  }
-
-  async function handleReceiveOrder(id: string) {
-    const order = orders.find((item) => item.id === id)
-    if (!order) return
+  async function handleTransfer({ itemId, qty, toBranch, notes }: TransferInput) {
     try {
-      for (const { itemId, qty, unitCost } of order.lines) {
-        await recordMovement({
-          itemId,
-          movement: { type: 'RECEIPT', quantity: qty, unitCost, reference: id },
-        }).unwrap()
-      }
-      setOrders(orders.map((item) => (item.id === id ? { ...item, status: 'Received' } : item)))
-      setToast(`${id} received in full; stock updated`)
+      await createTransfer({ item: itemId, quantity: qty, toBranch, ...(notes ? { notes } : {}) }).unwrap()
+      closeDialog()
+      setToast('Transfer created. The stock has left this branch.')
     } catch (error) {
-      setToast(failure(error, `Couldn’t receive ${id}. Some lines may already be in stock.`))
+      setDialogError(failure(error, 'The transfer was refused.'))
+    }
+  }
+
+  async function handleReceiveTransfer(id: string) {
+    setBusyId(id)
+    try {
+      await receiveTransfer(id).unwrap()
+      setToast('Transfer received. The stock is booked in.')
+    } catch (error) {
+      setToast(failure(error, 'Couldn’t receive the transfer.'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleCancelTransfer(id: string) {
+    setBusyId(id)
+    try {
+      await cancelTransfer(id).unwrap()
+      setToast('Transfer cancelled. The stock went back to the source.')
+    } catch (error) {
+      setToast(failure(error, 'Couldn’t cancel the transfer.'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleCreateOrder(input: PurchaseOrderInput) {
+    try {
+      await createOrder({
+        supplier: input.supplierId,
+        branch: input.branchId,
+        ...(input.expectedAt ? { expectedAt: input.expectedAt } : {}),
+        ...(input.notes ? { notes: input.notes } : {}),
+        lines: input.lines.map(({ itemId, qty, unitCost }) => ({ item: itemId, quantity: qty, unitCost })),
+      }).unwrap()
+      closeDialog()
+      setToast('Purchase order saved as a draft')
+    } catch (error) {
+      setDialogError(failure(error, 'The purchase order was refused.'))
+    }
+  }
+
+  async function handleOrderStatus(id: string, status: PoTargetStatus) {
+    setBusyId(id)
+    try {
+      await setOrderStatus({ id, status }).unwrap()
+      setToast(`Purchase order ${{ APPROVED: 'approved', ORDERED: 'marked as ordered', CANCELLED: 'cancelled' }[status]}`)
+    } catch (error) {
+      setToast(failure(error, 'Couldn’t change the purchase order.'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Receives every line in full; each one is a stock receipt on the server
+  async function handleReceiveOrder(id: string) {
+    setBusyId(id)
+    try {
+      await receiveOrder({ id }).unwrap()
+      setToast('Purchase order received; stock updated')
+    } catch (error) {
+      setToast(failure(error, 'Couldn’t receive the purchase order.'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function handleSaveSupplier(supplier: Supplier | null, changes: SupplierRequest) {
+    try {
+      if (supplier) await updateSupplier({ id: supplier.id, changes }).unwrap()
+      else await createSupplier(changes).unwrap()
+      closeDialog()
+      setToast(supplier ? 'Supplier saved' : 'Supplier added')
+    } catch (error) {
+      setDialogError(failure(error, 'The supplier was refused.'))
     }
   }
 
@@ -263,7 +329,7 @@ function InventoryPage() {
         safety: item.safety,
         max: item.max,
         unitCost: item.unitCost,
-        supplier: item.supplier,
+        ...(item.supplier ? { supplier: item.supplier } : {}),
         dailyUse: item.dailyUse,
         batch: item.batch,
         ...(item.expiresAt ? { expiresAt: item.expiresAt.slice(0, 10) } : {}),
@@ -426,6 +492,7 @@ function InventoryPage() {
           searchRef={searchRef}
           items={filtered}
           totalCount={items.length}
+          suppliers={supplierNames}
           now={now}
           filters={filters}
           filtersActive={filtersActive}
@@ -456,32 +523,37 @@ function InventoryPage() {
         <div className="min-w-0 space-y-4">
           <PurchaseOrdersPanel
             orders={orders}
-            items={items}
             canManage={permissions.manage}
             showCosts={permissions.costs}
+            loading={ordersQuery.isLoading}
+            error={ordersQuery.isError && !ordersQuery.data ? failure(ordersQuery.error, 'Couldn’t load the purchase orders.') : null}
+            busyId={busyId}
             onCreate={() => setDialog({ name: 'po', itemIds: [] })}
             onReceive={(id) => void handleReceiveOrder(id)}
-            onAdvance={(id) =>
-              setOrders(
-                orders.map((order) =>
-                  order.id === id
-                    ? { ...order, status: order.status === 'Draft' ? 'Approved' : 'Ordered' }
-                    : order,
-                ),
-              )
-            }
+            onSetStatus={(id, status) => void handleOrderStatus(id, status)}
           />
           <TransfersPanel
             transfers={transfers}
-            items={items}
             canManage={permissions.manage}
-            onReceive={handleReceiveTransfer}
+            loading={transfersQuery.isLoading}
+            error={transfersQuery.isError && !transfersQuery.data ? failure(transfersQuery.error, 'Couldn’t load the transfers.') : null}
+            busyId={busyId}
+            onReceive={(id) => void handleReceiveTransfer(id)}
+            onCancel={(id) => void handleCancelTransfer(id)}
           />
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <SuppliersPanel items={items} />
+        <SuppliersPanel
+          suppliers={suppliers}
+          items={items}
+          canManage={permissions.manage}
+          loading={suppliersQuery.isLoading}
+          error={suppliersQuery.isError && !suppliersQuery.data ? failure(suppliersQuery.error, 'Couldn’t load the suppliers.') : null}
+          onAdd={() => setDialog({ name: 'supplier', supplier: null })}
+          onEdit={(supplier) => setDialog({ name: 'supplier', supplier })}
+        />
         <EfficiencyPanel
           items={items}
           now={now}
@@ -535,18 +607,35 @@ function InventoryPage() {
       {dialog?.name === 'transfer' && (
         <TransferDialog
           items={items}
+          branches={branches}
           initialItemId={dialog.itemId}
-          onClose={() => setDialog(null)}
-          onCreate={handleTransfer}
+          error={dialogError}
+          busy={transferStatus.isLoading}
+          onClose={closeDialog}
+          onCreate={(input) => void handleTransfer(input)}
         />
       )}
       {dialog?.name === 'po' && (
         <PurchaseOrderDialog
           items={items}
+          suppliers={suppliers.filter(({ active }) => active)}
+          branches={branches}
           initialItemIds={dialog.itemIds}
+          defaultBranch={branch}
           showCosts={permissions.costs}
-          onClose={() => setDialog(null)}
-          onCreate={handleCreateOrder}
+          error={dialogError}
+          busy={orderStatus.isLoading}
+          onClose={closeDialog}
+          onCreate={(input) => void handleCreateOrder(input)}
+        />
+      )}
+      {dialog?.name === 'supplier' && (
+        <SupplierDialog
+          supplier={dialog.supplier}
+          error={dialogError}
+          busy={createSupplierStatus.isLoading || updateSupplierStatus.isLoading}
+          onClose={closeDialog}
+          onSave={(changes) => void handleSaveSupplier(dialog.supplier, changes)}
         />
       )}
       {dialog?.name === 'item' && (
@@ -554,6 +643,7 @@ function InventoryPage() {
           existing={items}
           branches={branches}
           defaultBranch={branch}
+          suppliers={supplierNames}
           error={createError ? failure(createError, 'The server rejected this item.') : null}
           onClose={() => {
             resetCreate()

@@ -218,11 +218,10 @@ function NewOrderDialog({
         customerId = await createCustomer({
           firstname,
           lastname: rest.join(' '),
-          phoneNumber: newPhone.trim(),
+          phone: newPhone.trim(),
           email: newEmail.trim(),
           homeAddress: '',
           neighbourhood: '',
-          loyaltyPoints: 0,
           branchId,
           referralSource: '',
         }).unwrap()

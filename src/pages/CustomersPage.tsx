@@ -39,7 +39,10 @@ import {
 import { CURRENT_USER, PERMISSIONS } from '../constants/orders'
 import type { PreviewState } from '../constants/orders'
 import { useBranchLookup, useChangeCustomers, useCustomersQuery } from '../hooks/useCustomers'
-import { useCreateCustomerMutation, useDeleteCustomerMutation } from '../services/customerApi'
+import { useDeleteCustomerMutation, useImportCustomersMutation, useSendBulkMessageMutation } from '../services/customerApi'
+import { useCreateSegmentMutation, useDeleteSegmentMutation, useListSegmentsQuery } from '../services/customerSegmentsApi'
+import CustomerDuplicatesDialog from '../components/customers/CustomerDuplicatesDialog'
+import { saveFailureMessage } from '../utils/apiErrors'
 import useLocalStorage from '../hooks/useLocalStorage'
 import useNow from '../hooks/useNow'
 import type {
@@ -53,7 +56,7 @@ import {
   applyPayment,
   compareCustomers,
   countCustomerFilters,
-  customerRequest,
+  splitCustomerName,
   customersToCsv,
   matchesCustomerFilters,
 } from '../utils/customers'
@@ -63,7 +66,7 @@ import { downloadFile, formatXaf } from '../utils/orders'
 const PAGE_SIZES = [10, 25, 50]
 const TOAST_MS = 4000
 
-type DialogName = 'add' | 'import' | 'campaign' | 'filters'
+type DialogName = 'add' | 'import' | 'campaign' | 'filters' | 'duplicates'
 
 function CustomersPage() {
   const now = useNow()
@@ -71,7 +74,9 @@ function CustomersPage() {
   const customersQuery = useCustomersQuery()
   const allCustomers = customersQuery.items
   const changeCustomers = useChangeCustomers()
-  const [createCustomer] = useCreateCustomerMutation()
+  const [importCustomers] = useImportCustomersMutation()
+  const [sendBulkMessage, campaignStatus] = useSendBulkMessageMutation()
+  const [campaignError, setCampaignError] = useState<string | null>(null)
   const [deleteCustomer] = useDeleteCustomerMutation()
   const { uuidOf } = useBranchLookup()
   const [role, setRole] = useLocalStorage<OrderRole>('customers.role', 'manager')
@@ -94,10 +99,14 @@ function CustomersPage() {
     'customers.hiddenColumns',
     [],
   )
-  const [customSegments, setCustomSegments] = useLocalStorage<CustomSegment[]>(
-    'customers.segments',
-    [],
-  )
+  const segmentsQuery = useListSegmentsQuery()
+  const [createSegment] = useCreateSegmentMutation()
+  const [deleteSegment] = useDeleteSegmentMutation()
+  const savedSegments = segmentsQuery.data ?? []
+  const customSegments: CustomSegment[] = savedSegments.map(({ name, filters: saved }) => ({
+    name,
+    filters: { ...EMPTY_CUSTOMER_FILTERS, ...saved },
+  }))
 
   const permissions = CUSTOMER_PERMISSIONS[role]
   const canCreateOrder = PERMISSIONS[role].create
@@ -263,6 +272,7 @@ function CustomersPage() {
         onImport={() => setDialog('import')}
         onExport={() => handleExport(filtered)}
         onCampaign={() => setDialog('campaign')}
+        onDuplicates={() => setDialog('duplicates')}
       />
 
       {shown === 'loading' && <OrdersSkeleton />}
@@ -310,17 +320,25 @@ function CustomersPage() {
             onOpenMoreFilters={() => setDialog('filters')}
             customSegments={customSegments}
             onApplySegment={replaceFilters}
-            onSaveSegment={(name) =>
-              setCustomSegments([
-                ...customSegments.filter((segment) => segment.name !== name),
-                { name, filters },
-              ])
-            }
-            onDeleteSegment={(name) =>
-              setCustomSegments(
-                customSegments.filter((segment) => segment.name !== name),
-              )
-            }
+            onSaveSegment={async (name) => {
+              // Only the filters that are set; the server expands a segment to them
+              const set = Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''))
+              try {
+                await createSegment({ name, filters: set }).unwrap()
+                setToast(`Segment “${name}” saved`)
+              } catch (error) {
+                setToast(saveFailureMessage(error, 'The segment wasn’t saved.', 'A segment with this name already exists.'))
+              }
+            }}
+            onDeleteSegment={async (name) => {
+              const segment = savedSegments.find((item) => item.name === name)
+              if (!segment) return
+              try {
+                await deleteSegment(segment.id).unwrap()
+              } catch (error) {
+                setToast(saveFailureMessage(error, 'The segment wasn’t deleted.'))
+              }
+            }}
             columns={columns}
             hiddenColumns={hiddenColumns}
             onToggleColumn={(key) =>
@@ -517,18 +535,54 @@ function CustomersPage() {
           onClose={() => setDialog(null)}
           onImport={async (imported) => {
             setDialog(null)
-            // One POST per row, in order
-            let created = 0
-            for (const customer of imported) {
-              try {
-                await createCustomer(customerRequest(customer, uuidOf(customer.branch))).unwrap()
-                created += 1
-              } catch {
-                // Counted below
-              }
+            // The server reads a CSV: it normalises phone numbers, skips ones the
+            // business already has, and lists the rows it refused
+            const branchId = uuidOf(imported[0]?.branch ?? '')
+            if (!branchId) {
+              setToast('Pick a branch for the imported customers. The branch list may still be loading.')
+              return
             }
-            const refused = imported.length - created
-            setToast(`${created} customers imported` + (refused ? `; ${refused} refused by the server` : ''))
+            const cell = (value: string) => `"${value.replace(/"/g, '""')}"`
+            const rows = imported.map((customer) => {
+              const { firstname, lastname } = splitCustomerName(customer.name)
+              const address = customer.addresses[0]
+              return [
+                'individual',
+                firstname,
+                lastname,
+                '',
+                customer.phone,
+                customer.email,
+                address?.street ?? '',
+                address?.landmark ?? '',
+                '',
+              ]
+                .map(cell)
+                .join(',')
+            })
+            const csv = ['kind,firstname,lastname,companyName,phone,email,address,neighbourhood,tags', ...rows].join('\n')
+            try {
+              const result = await importCustomers({
+                file: new File([csv], 'customers.csv', { type: 'text/csv' }),
+                branch: branchId,
+              }).unwrap()
+              setToast(
+                `${result.created} imported` +
+                  (result.skipped ? `, ${result.skipped} skipped as duplicates` : '') +
+                  (result.errors.length ? `, ${result.errors.length} refused (row ${result.errors[0].row}: ${result.errors[0].message})` : ''),
+              )
+            } catch (error) {
+              setToast(saveFailureMessage(error, 'The customers weren’t imported.', 'The file has too many rows (the limit is 1000).'))
+            }
+          }}
+        />
+      )}
+      {dialog === 'duplicates' && (
+        <CustomerDuplicatesDialog
+          onClose={() => setDialog(null)}
+          onMerged={(message) => {
+            setDialog(null)
+            setToast(message)
           }}
         />
       )}
@@ -536,12 +590,34 @@ function CustomersPage() {
         <CampaignDialog
           customers={filtered}
           selected={selected}
-          onClose={() => setDialog(null)}
-          onSend={(recipients, channel, scheduled) => {
+          busy={campaignStatus.isLoading}
+          error={campaignError}
+          onClose={() => {
+            setCampaignError(null)
             setDialog(null)
-            setToast(
-              `${channel} campaign for ${recipients} customers ${scheduled ? 'scheduled' : 'prepared'}. Sending isn’t connected yet.`,
-            )
+          }}
+          onSend={async ({ target, channel, message, scheduledFor }) => {
+            setCampaignError(null)
+            try {
+              const result = await sendBulkMessage({
+                ...target,
+                channel,
+                message,
+                marketing: true,
+                ...(scheduledFor ? { scheduledFor } : {}),
+              }).unwrap()
+              const skipped = result.skipped.reduce((sum, { count }) => sum + count, 0)
+              setDialog(null)
+              setToast(
+                `${result.sent} sent` +
+                  (result.scheduled ? `, ${result.scheduled} scheduled` : '') +
+                  (skipped ? `, ${skipped} skipped (no consent or contact)` : ''),
+              )
+            } catch (error) {
+              setCampaignError(
+                saveFailureMessage(error, 'The campaign wasn’t sent.', 'Too many customers for one send. Narrow the audience.'),
+              )
+            }
           }}
         />
       )}

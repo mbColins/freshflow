@@ -24,7 +24,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { BRANCH_SERVICES } from '../../constants/branches'
+import { useServiceNames } from '../../hooks/usePromotions'
 import {
   AUDIENCES,
   PROMOTION_STATUSES,
@@ -291,6 +291,7 @@ export function PromotionToolbar({
   onChange: (patch: Partial<PromotionFilters>) => void
   onReset: () => void
 }) {
+  const serviceNames = useServiceNames()
   const select = `${fieldClass} w-auto! max-sm:flex-1`
   return (
     <div className="space-y-2">
@@ -327,7 +328,7 @@ export function PromotionToolbar({
         </select>
         <select aria-label="Service" value={filters.service} onChange={(event) => onChange({ service: event.target.value })} className={select}>
           <option value="">All services</option>
-          {BRANCH_SERVICES.map(({ name }) => (
+          {serviceNames.map((name) => (
             <option key={name}>{name}</option>
           ))}
         </select>

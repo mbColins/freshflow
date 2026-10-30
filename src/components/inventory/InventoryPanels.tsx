@@ -18,7 +18,6 @@ import {
   CONSUMPTION_VARIANCE,
   INVENTORY_CATEGORIES,
   STOCK_STATUSES,
-  SUPPLIERS,
   VARIANCE_ALERT_PCT,
   WEEKLY_CONSUMPTION,
 } from '../../constants/inventory'
@@ -29,6 +28,7 @@ import type {
   PurchaseOrder,
   StockStatus,
   StockTransfer,
+  Supplier,
 } from '../../types/inventory'
 import { formatDate } from '../../utils/customers'
 import {
@@ -45,6 +45,7 @@ import {
   needsReorder,
 } from '../../utils/inventory'
 import { formatClock } from '../../utils/logistics'
+import type { PoTargetStatus } from '../../services/purchasingApi'
 import { formatXaf } from '../../utils/orders'
 import { formatCompactXaf } from '../../utils/services'
 import { secondaryButton } from '../orders/styles'
@@ -493,22 +494,26 @@ const PO_TONES = {
 
 export function PurchaseOrdersPanel({
   orders,
-  items,
   canManage,
   showCosts,
+  loading,
+  error,
+  busyId,
   onCreate,
   onReceive,
-  onAdvance,
+  onSetStatus,
 }: {
   orders: PurchaseOrder[]
-  items: InventoryItem[]
   canManage: boolean
   showCosts: boolean
+  loading: boolean
+  error: string | null
+  // The order a request is in flight for
+  busyId: string | null
   onCreate: () => void
   onReceive: (id: string) => void
-  onAdvance: (id: string) => void
+  onSetStatus: (id: string, status: PoTargetStatus) => void
 }) {
-  const name = (itemId: string) => items.find(({ id }) => id === itemId)?.name ?? itemId
   return (
     <Panel
       title="Purchase Orders"
@@ -521,7 +526,11 @@ export function PurchaseOrdersPanel({
         )
       }
     >
-      {orders.length === 0 ? (
+      {loading ? (
+        <PanelEmpty>Loading purchase orders…</PanelEmpty>
+      ) : error ? (
+        <PanelEmpty>{error}</PanelEmpty>
+      ) : orders.length === 0 ? (
         <PanelEmpty>No purchase orders found.</PanelEmpty>
       ) : (
         <div className="relative overflow-x-auto">
@@ -539,52 +548,73 @@ export function PurchaseOrdersPanel({
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} className="border-t border-line align-top">
-                  <td className="py-2.5 pr-3 font-mono text-[11px] font-bold text-ink">
-                    {order.id}
-                    <span className="block font-sans font-normal text-muted">
-                      {order.createdBy}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-3">
-                    <span className="block font-semibold text-ink">{order.supplier}</span>
-                    <span className="block text-[11px] text-muted">
-                      {order.lines.map(({ itemId, qty }) => `${qty} × ${name(itemId)}`).join(', ')}
-                    </span>
-                  </td>
-                  {showCosts && (
-                    <td className="py-2.5 pr-3 text-right font-semibold whitespace-nowrap text-ink tabular-nums">
-                      {formatXaf(getPoTotal(order))}
+              {orders.map((order) => {
+                const busy = busyId === order.id
+                const open = ['Draft', 'Approved', 'Ordered'].includes(order.status)
+                return (
+                  <tr key={order.id} className="border-t border-line align-top">
+                    <td className="py-2.5 pr-3 font-mono text-[11px] font-bold text-ink">
+                      {order.code}
+                      <span className="block font-sans font-normal text-muted">
+                        {order.createdBy}
+                      </span>
                     </td>
-                  )}
-                  <td className="py-2.5 pr-3 whitespace-nowrap">{formatDate(order.expectedAt)}</td>
-                  <td className="py-2.5 pr-3">
-                    <Badge tone={PO_TONES[order.status]}>{order.status}</Badge>
-                  </td>
-                  <td className="py-2.5 text-right whitespace-nowrap">
-                    {canManage && order.status === 'Draft' && (
-                      <button type="button" onClick={() => onAdvance(order.id)} className={smallButton}>
-                        Approve
-                      </button>
+                    <td className="py-2.5 pr-3">
+                      <span className="block font-semibold text-ink">{order.supplier}</span>
+                      <span className="block text-[11px] text-muted">
+                        {order.lines
+                          .map(({ itemName, qty, received }) =>
+                            received > 0 && received < qty ? `${received}/${qty} × ${itemName}` : `${qty} × ${itemName}`,
+                          )
+                          .join(', ')}
+                      </span>
+                    </td>
+                    {showCosts && (
+                      <td className="py-2.5 pr-3 text-right font-semibold whitespace-nowrap text-ink tabular-nums">
+                        {formatXaf(getPoTotal(order))}
+                      </td>
                     )}
-                    {canManage && order.status === 'Approved' && (
-                      <button type="button" onClick={() => onAdvance(order.id)} className={smallButton}>
-                        Mark Ordered
-                      </button>
-                    )}
-                    {canManage && ['Ordered', 'Partially Received'].includes(order.status) && (
-                      <button
-                        type="button"
-                        onClick={() => onReceive(order.id)}
-                        className={`${smallButton} font-bold`}
-                      >
-                        Receive
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    <td className="py-2.5 pr-3 whitespace-nowrap">
+                      {order.expectedAt ? formatDate(order.expectedAt) : '—'}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <Badge tone={PO_TONES[order.status]}>{order.status}</Badge>
+                    </td>
+                    <td className="py-2.5 text-right whitespace-nowrap">
+                      {canManage && order.status === 'Draft' && (
+                        <button type="button" disabled={busy} onClick={() => onSetStatus(order.id, 'APPROVED')} className={smallButton}>
+                          Approve
+                        </button>
+                      )}
+                      {canManage && order.status === 'Approved' && (
+                        <button type="button" disabled={busy} onClick={() => onSetStatus(order.id, 'ORDERED')} className={smallButton}>
+                          Mark Ordered
+                        </button>
+                      )}
+                      {canManage && ['Ordered', 'Partially Received'].includes(order.status) && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onReceive(order.id)}
+                          className={`${smallButton} font-bold`}
+                        >
+                          Receive
+                        </button>
+                      )}
+                      {canManage && open && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onSetStatus(order.id, 'CANCELLED')}
+                          className={`${smallButton} ml-1.5 text-danger`}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -602,44 +632,61 @@ const TRANSFER_TONES = {
 
 export function TransfersPanel({
   transfers,
-  items,
   canManage,
+  loading,
+  error,
+  busyId,
   onReceive,
+  onCancel,
 }: {
   transfers: StockTransfer[]
-  items: InventoryItem[]
   canManage: boolean
+  loading: boolean
+  error: string | null
+  busyId: string | null
   onReceive: (id: string) => void
+  onCancel: (id: string) => void
 }) {
   return (
     <Panel title="Stock Transfers" icon={ArrowLeftRight}>
-      {transfers.length === 0 ? (
+      {loading ? (
+        <PanelEmpty>Loading transfers…</PanelEmpty>
+      ) : error ? (
+        <PanelEmpty>{error}</PanelEmpty>
+      ) : transfers.length === 0 ? (
         <PanelEmpty>No transfers between branches.</PanelEmpty>
       ) : (
         <ul className="space-y-2">
           {transfers.map((transfer) => {
-            const item = items.find(({ id }) => id === transfer.itemId)
+            const busy = busyId === transfer.id
             return (
               <li key={transfer.id} className="rounded-lg bg-field p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-semibold text-ink">
-                    <span className="font-mono text-[11px]">{transfer.id}</span> ·{' '}
-                    {formatQty(transfer.qty, item?.unit ?? '')} {item?.name ?? transfer.itemId}
+                    <span className="font-mono text-[11px]">{transfer.code}</span> ·{' '}
+                    {formatQty(transfer.qty, transfer.unit)} {transfer.itemName}
                   </p>
                   <Badge tone={TRANSFER_TONES[transfer.status]}>{transfer.status}</Badge>
                 </div>
                 <p className="mt-1 text-[11px] text-muted">
                   {transfer.from} → {transfer.to} · requested by {transfer.requestedBy} ·{' '}
                   {formatClock(transfer.at)}
+                  {transfer.receivedBy && ` · received by ${transfer.receivedBy}`}
                 </p>
                 {canManage && transfer.status === 'In Transit' && (
-                  <button
-                    type="button"
-                    onClick={() => onReceive(transfer.id)}
-                    className={`${smallButton} mt-2 font-bold`}
-                  >
-                    Mark Received
-                  </button>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onReceive(transfer.id)}
+                      className={`${smallButton} font-bold`}
+                    >
+                      Mark Received
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => onCancel(transfer.id)} className={`${smallButton} text-danger`}>
+                      Cancel
+                    </button>
+                  </div>
                 )}
               </li>
             )
@@ -702,25 +749,75 @@ export function ExpiringPanel({
   )
 }
 
-export function SuppliersPanel({ items }: { items: InventoryItem[] }) {
+export function SuppliersPanel({
+  suppliers,
+  items,
+  canManage,
+  loading,
+  error,
+  onAdd,
+  onEdit,
+}: {
+  suppliers: Supplier[]
+  items: InventoryItem[]
+  canManage: boolean
+  loading: boolean
+  error: string | null
+  onAdd: () => void
+  onEdit: (supplier: Supplier) => void
+}) {
   return (
-    <Panel title="Suppliers" subtitle="Delivery performance (sample figures)" icon={Truck}>
-      <ul className="space-y-2">
-        {SUPPLIERS.map((supplier) => (
-          <li key={supplier.name} className="rounded-lg bg-field p-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-semibold text-ink">{supplier.name}</p>
-              <span className="text-[11px] text-muted">
-                {items.filter((item) => item.supplier === supplier.name).length} items supplied
-              </span>
-            </div>
-            <p className="mt-1 text-[11px] text-muted">
-              {supplier.contact} · {supplier.leadDays}-day delivery · {supplier.onTime}% on
-              time · {supplier.fulfilment}% fulfilment
-            </p>
-          </li>
-        ))}
-      </ul>
+    <Panel
+      title="Suppliers"
+      subtitle="Who you buy from and how long they take"
+      icon={Truck}
+      action={
+        canManage && (
+          <button type="button" onClick={onAdd} className={`${smallButton} font-bold`}>
+            + Supplier
+          </button>
+        )
+      }
+    >
+      {loading ? (
+        <PanelEmpty>Loading suppliers…</PanelEmpty>
+      ) : error ? (
+        <PanelEmpty>{error}</PanelEmpty>
+      ) : suppliers.length === 0 ? (
+        <PanelEmpty>No suppliers yet. Add one to start purchase orders.</PanelEmpty>
+      ) : (
+        <ul className="space-y-2">
+          {suppliers.map((supplier) => (
+            <li key={supplier.id} className="rounded-lg bg-field p-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 font-semibold text-ink">
+                  {supplier.name}
+                  {!supplier.active && <Badge>Inactive</Badge>}
+                </p>
+                <span className="flex items-center gap-2 text-[11px] text-muted">
+                  {items.filter((item) => item.supplier === supplier.name).length} items supplied
+                  {canManage && (
+                    <button type="button" onClick={() => onEdit(supplier)} className="font-semibold text-brand hover:underline">
+                      Edit
+                    </button>
+                  )}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] text-muted">
+                {[
+                  supplier.contactName,
+                  supplier.phone,
+                  supplier.email,
+                  supplier.leadTimeDays > 0 && `${supplier.leadTimeDays}-day delivery`,
+                  supplier.paymentTerms,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'No contact details'}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
     </Panel>
   )
 }

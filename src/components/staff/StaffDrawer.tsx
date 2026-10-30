@@ -18,6 +18,7 @@ import { primaryButton, secondaryButton, sectionTitle } from '../orders/styles'
 import Badge from '../ui/Badge'
 import Modal from '../ui/Modal'
 import { StaffStatusBadge, WorkloadBar } from './StaffBits'
+import { AttendanceHistorySection, TasksSection, TrainingSection } from './StaffDrawerData'
 import { DetailBox } from '../ui/Details'
 
 type Tab = 'overview' | 'work' | 'performance' | 'skills' | 'permissions' | 'activity' | 'pay'
@@ -246,6 +247,8 @@ function StaffDrawer({
                   />
                 </div>
               </section>
+              <TasksSection userId={member.id} canManage={permissions.manage} />
+              <AttendanceHistorySection userId={member.id} />
             </div>
           )}
 
@@ -316,6 +319,7 @@ function StaffDrawer({
                   />
                 </div>
               </section>
+              <TrainingSection userId={member.id} canManage={permissions.manage} />
             </div>
           )}
 

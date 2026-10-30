@@ -1,21 +1,10 @@
-import {
-  Banknote,
-  CalendarPlus,
-  Download,
-  Plus,
-  Receipt,
-  RefreshCw,
-  UserPlus,
-} from 'lucide-react'
-import SegmentedControl from '../ui/SegmentedControl'
-import { VIEW_STATES } from './dashboardState'
-import type { ViewState } from './dashboardState'
+import { Banknote, CalendarPlus, Plus, RefreshCw, UserPlus } from 'lucide-react'
+import { Link } from 'react-router'
 
 const SECONDARY_ACTIONS = [
-  { label: 'Add Customer', icon: UserPlus },
-  { label: 'Schedule Pickup', icon: CalendarPlus },
-  { label: 'Record Payment', icon: Banknote },
-  { label: 'Add Expense', icon: Receipt },
+  { label: 'Add Customer', icon: UserPlus, to: '/customers' },
+  { label: 'Schedule Pickup', icon: CalendarPlus, to: '/pickup-delivery' },
+  { label: 'Record Payment', icon: Banknote, to: '/payments' },
 ]
 
 const secondaryClass =
@@ -28,8 +17,6 @@ type QuickActionsProps = {
   branches?: { id: string; name: string }[]
   branch: string
   onBranchChange: (branch: string) => void
-  viewState: ViewState
-  onViewStateChange: (viewState: ViewState) => void
   refreshing: boolean
   onRefresh: () => void
 }
@@ -39,26 +26,24 @@ function QuickActions({
   branches,
   branch,
   onBranchChange,
-  viewState,
-  onViewStateChange,
   refreshing,
   onRefresh,
 }: QuickActionsProps) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <Link
+          to="/orders?new=1"
           className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand px-3 text-[11px] font-bold text-white transition hover:bg-brand-dark focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:outline-none"
         >
           <Plus className="size-3.5" aria-hidden="true" />
           New Order
-        </button>
-        {SECONDARY_ACTIONS.map(({ label, icon: Icon }) => (
-          <button key={label} type="button" className={secondaryClass}>
+        </Link>
+        {SECONDARY_ACTIONS.map(({ label, icon: Icon, to }) => (
+          <Link key={label} to={to} className={secondaryClass}>
             <Icon className="size-3.5 text-muted" aria-hidden="true" />
             {label}
-          </button>
+          </Link>
         ))}
       </div>
 
@@ -85,12 +70,6 @@ function QuickActions({
             </span>
           </div>
         )}
-        <SegmentedControl
-          label="Dashboard state preview"
-          options={VIEW_STATES}
-          value={viewState}
-          onChange={onViewStateChange}
-        />
         <button
           type="button"
           onClick={onRefresh}
@@ -101,10 +80,6 @@ function QuickActions({
             className={`size-3.5 text-muted ${refreshing ? 'animate-spin' : ''}`}
             aria-hidden="true"
           />
-        </button>
-        <button type="button" className={secondaryClass}>
-          <Download className="size-3.5 text-muted" aria-hidden="true" />
-          Export
         </button>
       </div>
     </div>

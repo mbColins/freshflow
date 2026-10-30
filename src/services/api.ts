@@ -103,6 +103,7 @@ export const api = createApi({
   tagTypes: [
     'Branch',
     'Customer',
+    'Dashboard',
     'DeliveryZone',
     'Driver',
     'Inventory',

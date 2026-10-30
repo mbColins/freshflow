@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { inAppNotificationApi, toInAppNotification } from '../services/inAppNotificationApi'
 import type { RawInAppNotification } from '../services/inAppNotificationApi'
+import { readEvents } from '../utils/readEventStream'
+import type { StreamEvent } from '../utils/readEventStream'
 import { PRE_AUTH } from '../store/slices/authSlice'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 
@@ -8,39 +10,6 @@ import { useAppDispatch, useAppSelector } from '../store/hooks'
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 // The server closes the stream after 30 minutes; reconnect at once then
 const RECONNECT_MS = 500
-
-type StreamEvent = { event: string; data: string }
-
-// Reads a text/event-stream body and calls onEvent for each complete event.
-// Comments (": ping") are skipped
-async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: StreamEvent) => void) {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  for (;;) {
-    const { value, done } = await reader.read()
-    if (done) return
-    // `stream: true` keeps a character split across chunks intact
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
-    let end = buffer.indexOf('\n\n')
-    while (end !== -1) {
-      const block = buffer.slice(0, end)
-      buffer = buffer.slice(end + 2)
-      let event = 'message'
-      const data: string[] = []
-      for (const line of block.split('\n')) {
-        if (line.startsWith(':')) continue
-        const colon = line.indexOf(':')
-        const field = colon === -1 ? line : line.slice(0, colon)
-        const text = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '')
-        if (field === 'event') event = text
-        else if (field === 'data') data.push(text)
-      }
-      if (data.length) onEvent({ event, data: data.join('\n') })
-      end = buffer.indexOf('\n\n')
-    }
-  }
-}
 
 // Keeps the bell live: opens GET /notifications/stream with the session token
 // and folds each pushed notification into the cached list and unread count.

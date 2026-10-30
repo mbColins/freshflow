@@ -1,14 +1,4 @@
-import { createContext, useContext } from 'react'
 import type { UserType } from '../../types/user'
-
-export const VIEW_STATES = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'skeleton', label: 'Skeleton' },
-  { value: 'empty', label: 'Empty' },
-  { value: 'error', label: 'Error' },
-] as const
-
-export type ViewState = (typeof VIEW_STATES)[number]['value']
 
 export const ROLES = [
   { value: 'admin', label: 'Admin' },
@@ -79,18 +69,4 @@ export const ROLE_SECTIONS: Record<Role, SectionId[]> = {
     'staff',
     'events',
   ],
-}
-
-type DashboardView = {
-  viewState: ViewState
-  onRetry: () => void
-}
-
-export const DashboardViewContext = createContext<DashboardView>({
-  viewState: 'normal',
-  onRetry: () => {},
-})
-
-export function useDashboardView() {
-  return useContext(DashboardViewContext)
 }

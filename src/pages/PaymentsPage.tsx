@@ -35,6 +35,7 @@ import type { PaymentPermissions } from '../constants/payments'
 import useCurrentUser from '../hooks/useCurrentUser'
 import useNow from '../hooks/useNow'
 import { useListAuditQuery } from '../services/auditApi'
+import { useListPendingUnpaidOrdersQuery } from '../services/pendingOrdersApi'
 import {
   METHOD_TO_SERVER,
   useAdjustCashSessionMutation,
@@ -102,6 +103,8 @@ function PaymentsPage() {
   const paymentsQuery = useListPaymentsQuery(RECENT, { skip: !permissions.view })
   const transactions = paymentsQuery.data?.items ?? NO_TRANSACTIONS
   const { data: receivables = [] } = useListReceivablesQuery(RECENT, { skip: !permissions.view })
+  // What the record-payment form offers: the orders still open or not fully paid
+  const { data: payableOrders = [] } = useListPendingUnpaidOrdersQuery(undefined, { skip: !permissions.record })
   const { data: serverRefunds } = useListRefundsQuery(RECENT, { skip: !permissions.view })
   const { data: serverExceptions } = useListPaymentExceptionsQuery(RECENT, { skip: !permissions.view })
   const sessionQuery = useGetCurrentCashSessionQuery(undefined, { skip: !permissions.view })
@@ -532,7 +535,7 @@ function PaymentsPage() {
       />
       {dialog?.name === 'record' && (
         <RecordPaymentDialog
-          receivables={receivables}
+          receivables={payableOrders}
           providers={providers}
           initialReceivableId={dialog.receivableId}
           onClose={() => setDialog(null)}
