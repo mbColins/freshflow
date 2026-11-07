@@ -20,6 +20,7 @@ import {
   primaryButton,
   secondaryButton,
 } from './styles'
+import { printReceipt } from '../../utils/printReceipt'
 
 export type ConfirmRequest = {
   title: string
@@ -210,7 +211,7 @@ export function ReceiptDialog({
           </button>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={() => void printReceipt()}
             className={primaryButton}
           >
             <Printer className="size-4" aria-hidden="true" />

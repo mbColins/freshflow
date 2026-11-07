@@ -13,7 +13,8 @@ type LogoPickerProps = {
   error?: string | null
   onChoose: (file: File) => void
   // Clears the chosen file, or the saved logo when there is no new file
-  onRemove: () => void
+  // Leave out when the logo can only be replaced, not removed
+  onRemove?: () => void
 }
 
 // A square placeholder that opens the file picker and previews the logo
@@ -67,7 +68,7 @@ function LogoPicker({ id, label = 'Logo (optional)', preview, file, error, onCho
                 ? 'Current logo'
                 : 'Click the square to add a logo'}
           </p>
-          {preview && (
+          {preview && onRemove && (
             <button
               type="button"
               onClick={onRemove}

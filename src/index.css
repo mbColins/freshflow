@@ -16,23 +16,62 @@
   --color-field: #f1f4fb;
 }
 
-/* Printing a receipt: show only the receipt, not the page behind the dialog */
-@media print {
-  body:has(.print-area) * {
-    visibility: hidden;
+/* Sign-in screens: the brand panel's parts rise into place one after another.
+   --delay is set per part; with Reduce motion on (the setting or the system's
+   preference) there is no animation and the parts simply appear */
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
   }
-  .print-area,
-  .print-area * {
-    visibility: visible;
+  to {
+    opacity: 1;
+    transform: none;
   }
-  .print-area {
-    position: fixed;
-    inset: 0;
-    padding: 24px;
+}
+.auth-rise {
+  animation: auth-rise 0.65s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--delay, 0s);
+}
+/* The progress bar fills from the left to its width; the live dot sends out a ring */
+@keyframes auth-fill {
+  from {
+    transform: scaleX(0);
   }
-  dialog::backdrop {
-    display: none;
+  to {
+    transform: scaleX(1);
   }
+}
+.auth-fill {
+  transform-origin: left;
+  animation: auth-fill 1.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--delay, 0s);
+}
+@keyframes auth-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.auth-ping {
+  animation: auth-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-rise,
+  .auth-fill,
+  .auth-ping {
+    animation: none;
+  }
+}
+:root[data-motion='reduced'] .auth-rise,
+:root[data-motion='reduced'] .auth-fill,
+:root[data-motion='reduced'] .auth-ping {
+  animation: none;
 }
 
 /* ---------- Application settings (set on <html> by utils/settings.ts) ---------- */

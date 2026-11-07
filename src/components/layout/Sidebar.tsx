@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Bell,
   Building2,
+  CalendarClock,
   ChartColumn,
   ChevronDown,
   ClipboardList,
@@ -24,6 +25,7 @@ import {
   Tag,
   Truck,
   UserCog,
+  UserPlus,
   Users,
   WashingMachine,
 } from 'lucide-react'
@@ -79,7 +81,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
           { label: 'Roles', to: '/staff/roles' },
         ],
       },
-      { label: 'Reports', menu: 'REPORTS', icon: ChartColumn },
+      { label: 'Reports', menu: 'REPORTS', icon: ChartColumn, to: '/reports' },
       { label: 'Notifications', menu: 'NOTIFICATIONS', icon: Bell, to: '/notifications' },
     ],
   },
@@ -118,6 +120,8 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { label: 'Tenants', menu: 'TENANTS', icon: Building2, to: '/tenants' },
       { label: 'Subscription Plans', menu: 'PLATFORM_PLANS', icon: Layers, to: '/platform/plans' },
+      { label: 'Account Requests', menu: 'ACCOUNT_REQUESTS', icon: UserPlus, to: '/platform/account-requests' },
+      { label: 'Demo Requests', menu: 'DEMO_REQUESTS', icon: CalendarClock, to: '/platform/demo-requests' },
     ],
   },
 ]

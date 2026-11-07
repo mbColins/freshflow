@@ -6,6 +6,7 @@ import { api } from './api'
 export type ConfigChannel = 'EMAIL' | 'SMS' | 'PUSH'
 
 export type TenantConfiguration = {
+  // Read only: where the saved logo is served. Change it with uploadTenantLogo
   logoUrl: string
   primaryColor: string
   receiptTemplate: string
@@ -13,9 +14,17 @@ export type TenantConfiguration = {
   defaultLanguage: string
   defaultTimezone: string
   enabledNotificationChannels: ConfigChannel[]
+  // Loyalty and VIP rules; null while the server's defaults apply
+  pointsPerXaf: number | null
+  xafPerPoint: number | null
+  loyaltySilverMin: number | null
+  loyaltyGoldMin: number | null
+  loyaltyPlatinumMin: number | null
+  vipSpendThreshold: number | null
 }
 
-type RawConfiguration = Partial<Omit<TenantConfiguration, 'enabledNotificationChannels'>> & {
+type RawConfiguration = Partial<Omit<TenantConfiguration, 'enabledNotificationChannels' | 'logoUrl'>> & {
+  logoUrl?: string | null
   enabledNotificationChannels?: string[] | null
 }
 
@@ -27,7 +36,25 @@ const toConfiguration = (raw: RawConfiguration | null): TenantConfiguration => (
   defaultLanguage: raw?.defaultLanguage ?? '',
   defaultTimezone: raw?.defaultTimezone ?? '',
   enabledNotificationChannels: (raw?.enabledNotificationChannels ?? []) as ConfigChannel[],
+  pointsPerXaf: raw?.pointsPerXaf ?? null,
+  xafPerPoint: raw?.xafPerPoint ?? null,
+  loyaltySilverMin: raw?.loyaltySilverMin ?? null,
+  loyaltyGoldMin: raw?.loyaltyGoldMin ?? null,
+  loyaltyPlatinumMin: raw?.loyaltyPlatinumMin ?? null,
+  vipSpendThreshold: raw?.vipSpendThreshold ?? null,
 })
+
+// The server ignores logoUrl (the logo has its own upload) and keeps any field it isn't sent,
+// so blank (null) loyalty fields are left out rather than sent as explicit nulls
+function configurationBody(config: Partial<TenantConfiguration>) {
+  return Object.fromEntries(Object.entries(config).filter(([key, value]) => key !== 'logoUrl' && value !== null))
+}
+
+export type TenantConfigurationPage = {
+  items: (TenantConfiguration & { id: number; tenant: string })[]
+  total: number
+  totalPages: number
+}
 
 // ---------- Domains ----------
 
@@ -93,6 +120,7 @@ type RawAppConfig = {
 }
 
 const CONFIG = (id: string) => ({ type: 'TenantConfig' as const, id })
+const CONFIG_LIST = { type: 'TenantConfig' as const, id: 'LIST' }
 const DOMAINS = (id: string) => ({ type: 'Domain' as const, id })
 const APP = { type: 'AppConfig' as const, id: 'LIST' }
 
@@ -105,15 +133,53 @@ export const businessSettingsApi = api.injectEndpoints({
       providesTags: (_result, _error, tenantId) => [CONFIG(tenantId)],
     }),
     // 409 tenant_configuration_already_exist
+    // 400 invalid_loyalty_settings / loyalty_tiers_must_increase
     createTenantConfiguration: build.mutation<void, { tenantId: string; config: Partial<TenantConfiguration> }>({
-      query: ({ tenantId, config }) => ({ url: `/tenant-configuration/${encodeURIComponent(tenantId)}`, method: 'POST', body: config }),
+      query: ({ tenantId, config }) => ({
+        url: `/tenant-configuration/${encodeURIComponent(tenantId)}`,
+        method: 'POST',
+        body: configurationBody(config),
+      }),
       transformResponse: () => undefined,
-      invalidatesTags: (_result, _error, { tenantId }) => [CONFIG(tenantId)],
+      invalidatesTags: (_result, _error, { tenantId }) => [CONFIG(tenantId), CONFIG_LIST],
     }),
     updateTenantConfiguration: build.mutation<void, { tenantId: string; config: Partial<TenantConfiguration> }>({
-      query: ({ tenantId, config }) => ({ url: `/tenant-configuration/${encodeURIComponent(tenantId)}`, method: 'PATCH', body: config }),
+      query: ({ tenantId, config }) => ({
+        url: `/tenant-configuration/${encodeURIComponent(tenantId)}`,
+        method: 'PATCH',
+        body: configurationBody(config),
+      }),
       transformResponse: () => undefined,
-      invalidatesTags: (_result, _error, { tenantId }) => [CONFIG(tenantId)],
+      invalidatesTags: (_result, _error, { tenantId }) => [CONFIG(tenantId), CONFIG_LIST],
+    }),
+    // Needs an existing configuration (404 otherwise). Stored on the tenant: PNG, JPEG or WebP, up to 1 MB
+    uploadTenantLogo: build.mutation<TenantConfiguration, { tenantId: string; file: File }>({
+      query: ({ tenantId, file }) => {
+        const body = new FormData()
+        body.append('file', file, file.name)
+        return { url: `/tenant-configuration/${encodeURIComponent(tenantId)}/logo`, method: 'POST', body }
+      },
+      transformResponse: (response: ApiResponse<RawConfiguration>) => toConfiguration(response.content),
+      invalidatesTags: (_result, _error, { tenantId }) => [CONFIG(tenantId), { type: 'Tenant', id: 'LIST' }],
+    }),
+    deleteTenantConfiguration: build.mutation<void, string>({
+      query: (tenantId) => ({ url: `/tenant-configuration/${encodeURIComponent(tenantId)}`, method: 'DELETE' }),
+      transformResponse: () => undefined,
+      invalidatesTags: (_result, _error, tenantId) => [CONFIG(tenantId), CONFIG_LIST],
+    }),
+    // Platform view of every business's configuration, newest first. Zero-based pages
+    listTenantConfigurations: build.query<TenantConfigurationPage, { search?: string; page?: number; size?: number } | void>({
+      query: (params) => ({
+        url: '/tenant-configuration/',
+        params: { ...(params?.search?.trim() ? { search: params.search.trim() } : {}), page: params?.page, size: params?.size },
+      }),
+      transformResponse: (
+        response: ApiResponse<{ data?: (RawConfiguration & { id?: number; tenant?: string })[]; totalElements?: number; totalPages?: number }>,
+      ) => {
+        const items = (response.content?.data ?? []).map((raw) => ({ ...toConfiguration(raw), id: raw.id ?? 0, tenant: raw.tenant ?? '' }))
+        return { items, total: response.content?.totalElements ?? items.length, totalPages: response.content?.totalPages ?? 1 }
+      },
+      providesTags: [CONFIG_LIST],
     }),
 
     listDomains: build.query<TenantDomain[], string>({
@@ -191,6 +257,9 @@ export const {
   useGetTenantConfigurationQuery,
   useCreateTenantConfigurationMutation,
   useUpdateTenantConfigurationMutation,
+  useUploadTenantLogoMutation,
+  useDeleteTenantConfigurationMutation,
+  useListTenantConfigurationsQuery,
   useListDomainsQuery,
   useCreatePlatformSubdomainMutation,
   useRequestCustomDomainMutation,

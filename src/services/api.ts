@@ -101,10 +101,12 @@ export const api = createApi({
   reducerPath: 'api',
   baseQuery,
   tagTypes: [
+    'AccountRequest',
     'Branch',
     'Customer',
     'Dashboard',
     'DeliveryZone',
+    'DemoRequest',
     'Driver',
     'Inventory',
     'Logistics',

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
 import { Menu, Plus, Search, Store } from 'lucide-react'
 import useCurrentUser from '../../hooks/useCurrentUser'
+import FullscreenToggle from './FullscreenToggle'
 import NotificationBell from './NotificationBell'
 
 
@@ -70,6 +71,8 @@ function Topbar({ onOpenMenu }: TopbarProps) {
           <Plus className="size-4" aria-hidden="true" />
           New Order
         </Link>
+
+        <FullscreenToggle />
 
         <NotificationBell />
 

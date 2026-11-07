@@ -5,6 +5,7 @@ import type { ConfirmRequest } from '../components/orders/OrderDialogs'
 import { fieldClass, labelClass, primaryButton, secondaryButton } from '../components/orders/styles'
 import Badge from '../components/ui/Badge'
 import type { BadgeTone } from '../components/ui/Badge'
+import LogoPicker from '../components/ui/LogoPicker'
 import Panel from '../components/ui/Panel'
 import useCurrentUser from '../hooks/useCurrentUser'
 import {
@@ -17,10 +18,14 @@ import {
   useRequestCustomDomainMutation,
   useUpdateAppConfigMutation,
   useUpdateTenantConfigurationMutation,
+  useUploadTenantLogoMutation,
 } from '../services/businessSettingsApi'
 import type { AppConfig, AppConfigChanges, ConfigChannel, DomainStatus, TenantConfiguration } from '../services/businessSettingsApi'
 import { useGetTenantDropdownQuery } from '../services/tenantApi'
 import { describeError } from '../utils/apiReasons'
+import { logoProblem } from '../utils/logo'
+
+type NumericKey = 'pointsPerXaf' | 'xafPerPoint' | 'loyaltySilverMin' | 'loyaltyGoldMin' | 'loyaltyPlatinumMin' | 'vipSpendThreshold'
 
 const TOAST_MS = 5000
 const CHANNELS: { id: ConfigChannel; label: string }[] = [
@@ -41,6 +46,34 @@ const EMPTY_CONFIG: TenantConfiguration = {
   defaultLanguage: 'en',
   defaultTimezone: 'Africa/Douala',
   enabledNotificationChannels: ['EMAIL'],
+  pointsPerXaf: null,
+  xafPerPoint: null,
+  loyaltySilverMin: null,
+  loyaltyGoldMin: null,
+  loyaltyPlatinumMin: null,
+  vipSpendThreshold: null,
+}
+
+// The loyalty rules, as number inputs. Blank keeps whatever the server already has
+const LOYALTY_FIELDS: { key: NumericKey; label: string; step?: string }[] = [
+  { key: 'pointsPerXaf', label: 'Points earned per XAF' },
+  { key: 'xafPerPoint', label: 'XAF value of a point', step: 'any' },
+  { key: 'loyaltySilverMin', label: 'Silver from (points)' },
+  { key: 'loyaltyGoldMin', label: 'Gold from (points)' },
+  { key: 'loyaltyPlatinumMin', label: 'Platinum from (points)' },
+  { key: 'vipSpendThreshold', label: 'VIP spend threshold (XAF)', step: 'any' },
+]
+
+// Only what has been filled in is checked. The server stays the judge of the full
+// picture (it also weighs a tier against the ones already saved or defaulted)
+function loyaltyProblem(form: TenantConfiguration) {
+  if (form.pointsPerXaf !== null && form.pointsPerXaf < 1) return 'Points per XAF must be at least 1.'
+  if ((form.xafPerPoint ?? 0) < 0 || (form.vipSpendThreshold ?? 0) < 0) return 'Amounts can’t be negative.'
+  const tiers = [form.loyaltySilverMin, form.loyaltyGoldMin, form.loyaltyPlatinumMin].filter((tier) => tier !== null)
+  if (tiers.some((tier, index) => tier < 1 || (index > 0 && tier <= tiers[index - 1]))) {
+    return 'Silver, Gold and Platinum must rise in that order.'
+  }
+  return null
 }
 
 function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
@@ -64,8 +97,28 @@ function ConfigurationPanel({ tenantId, onToast }: { tenantId: string; onToast: 
   const [draft, setDraft] = useState<TenantConfiguration | null>(null)
   const form = draft ?? data ?? EMPTY_CONFIG
   const patch = (change: Partial<TenantConfiguration>) => setDraft({ ...form, ...change })
+  const [uploadLogo, { isLoading: uploading }] = useUploadTenantLogoMutation()
+  const [logoError, setLogoError] = useState<string | null>(null)
+  const problem = loyaltyProblem(form)
+
+  // The logo has its own endpoint, so it saves on its own rather than with the form
+  async function handleLogo(file: File) {
+    const rejected = logoProblem(file)
+    setLogoError(rejected)
+    if (rejected) return
+    try {
+      await uploadLogo({ tenantId, file }).unwrap()
+      onToast('Logo updated')
+    } catch (caught) {
+      setLogoError(describeError(caught, 'The logo wasn’t uploaded.'))
+    }
+  }
 
   async function handleSave() {
+    if (problem) {
+      onToast(problem)
+      return
+    }
     try {
       if (missing) await create({ tenantId, config: form }).unwrap()
       else await update({ tenantId, config: form }).unwrap()
@@ -92,9 +145,18 @@ function ConfigurationPanel({ tenantId, onToast }: { tenantId: string; onToast: 
                 <input aria-label="Brand colour code" value={form.primaryColor} onChange={(event) => patch({ primaryColor: event.target.value })} className={`${fieldClass} font-mono`} />
               </div>
             </Field>
-            <Field id="cfg-logo" label="Logo address">
-              <input id="cfg-logo" value={form.logoUrl} onChange={(event) => patch({ logoUrl: event.target.value })} placeholder="https://…" className={fieldClass} />
-            </Field>
+            {missing ? (
+              <p className="self-end rounded-lg bg-field p-3 text-xs text-muted">Save the settings once, then you can add a logo.</p>
+            ) : (
+              <LogoPicker
+                id="cfg-logo"
+                label={uploading ? 'Logo (uploading…)' : 'Logo'}
+                preview={data?.logoUrl || null}
+                file={null}
+                error={logoError}
+                onChoose={(file) => void handleLogo(file)}
+              />
+            )}
             <Field id="cfg-currency" label="Currency">
               <input id="cfg-currency" value={form.defaultCurrency} onChange={(event) => patch({ defaultCurrency: event.target.value.toUpperCase() })} className={fieldClass} />
             </Field>
@@ -133,13 +195,32 @@ function ConfigurationPanel({ tenantId, onToast }: { tenantId: string; onToast: 
           <Field id="cfg-receipt" label="Receipt template">
             <textarea id="cfg-receipt" rows={3} value={form.receiptTemplate} onChange={(event) => patch({ receiptTemplate: event.target.value })} className={`${fieldClass} h-auto py-2`} />
           </Field>
+          <fieldset>
+            <legend className={labelClass}>Loyalty &amp; VIP</legend>
+            <div className="grid gap-3 pt-1.5 sm:grid-cols-3">
+              {LOYALTY_FIELDS.map(({ key, label, step }) => (
+                <Field key={key} id={`cfg-${key}`} label={label}>
+                  <input
+                    id={`cfg-${key}`}
+                    type="number"
+                    min={0}
+                    step={step ?? 1}
+                    value={form[key] ?? ''}
+                    onChange={(event) => patch({ [key]: event.target.value === '' ? null : Number(event.target.value) })}
+                    className={fieldClass}
+                  />
+                </Field>
+              ))}
+            </div>
+            {problem && <p role="alert" className="pt-1.5 text-[11px] text-danger">{problem}</p>}
+          </fieldset>
           <div className="flex justify-end gap-2">
             {draft && (
               <button type="button" onClick={() => setDraft(null)} className={secondaryButton}>
                 Discard
               </button>
             )}
-            <button type="button" onClick={() => void handleSave()} disabled={!draft || creating || updating} className={primaryButton}>
+            <button type="button" onClick={() => void handleSave()} disabled={!draft || creating || updating || problem !== null} className={primaryButton}>
               {creating || updating ? 'Saving…' : 'Save Settings'}
             </button>
           </div>

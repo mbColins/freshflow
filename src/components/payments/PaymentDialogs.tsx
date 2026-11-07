@@ -26,6 +26,7 @@ import {
   secondaryButton,
 } from '../orders/styles'
 import Modal from '../ui/Modal'
+import { printReceipt } from '../../utils/printReceipt'
 
 const pickClass =
   'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-xs transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none'
@@ -1031,7 +1032,7 @@ export function TxnReceiptDialog({
           <button type="button" onClick={onClose} className={secondaryButton}>
             Close
           </button>
-          <button type="button" onClick={() => window.print()} disabled={!receipt} className={primaryButton}>
+          <button type="button" onClick={() => void printReceipt()} disabled={!receipt} className={primaryButton}>
             <Printer className="size-4" aria-hidden="true" />
             Print Receipt
           </button>

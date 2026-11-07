@@ -3,11 +3,13 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import GuestOnly from './components/auth/GuestOnly'
 import RequireAuth from './components/auth/RequireAuth'
 import AppLayout from './components/layout/AppLayout'
+import AccountRequestsPage from './pages/AccountRequestsPage'
 import BranchDetailPage from './pages/BranchDetailPage'
 import BranchesPage from './pages/BranchesPage'
 import CustomerProfilePage from './pages/CustomerProfilePage'
 import CustomersPage from './pages/CustomersPage'
 import DashboardPage from './pages/DashboardPage'
+import DemoRequestsPage from './pages/DemoRequestsPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import InventoryPage from './pages/InventoryPage'
 import LoginPage from './pages/LoginPage'
@@ -24,6 +26,7 @@ import PaymentsPage from './pages/PaymentsPage'
 import PlatformPlansPage from './pages/PlatformPlansPage'
 import PricingPage from './pages/PricingPage'
 import PromotionsPage from './pages/PromotionsPage'
+import ReportsPage from './pages/ReportsPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import ServiceDetailPage from './pages/ServiceDetailPage'
 import ServicesPage from './pages/ServicesPage'
@@ -71,6 +74,7 @@ function App() {
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/pricing/subscriptions" element={<SubscriptionPlansPage />} />
             <Route path="/promotions" element={<PromotionsPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/settings/business" element={<BusinessSettingsPage />} />
             <Route path="/audit" element={<AuditLogPage />} />
@@ -81,6 +85,8 @@ function App() {
             <Route path="/services/:serviceId" element={<ServiceDetailPage />} />
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/platform/plans" element={<PlatformPlansPage />} />
+            <Route path="/platform/account-requests" element={<AccountRequestsPage />} />
+            <Route path="/platform/demo-requests" element={<DemoRequestsPage />} />
           </Route>
         </Route>
         {/* Sign-in and recovery: signed-in users are sent to the app */}
