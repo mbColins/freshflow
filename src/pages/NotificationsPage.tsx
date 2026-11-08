@@ -29,12 +29,14 @@ import {
   DEFAULT_PREFERENCES,
   EMPTY_NOTIFICATION_FILTERS,
   RULE_RECIPIENTS,
+  SKIP_REASONS,
   RULE_TRIGGERS,
 } from '../constants/notifications'
 import { useGetBranchDropdownQuery } from '../services/branchApi'
 import useCurrentUser from '../hooks/useCurrentUser'
 import useNotifications, { notificationStore } from '../hooks/useNotifications'
 import useNow from '../hooks/useNow'
+import useSendInApp from '../hooks/useSendInApp'
 import { useListAuditQuery } from '../services/auditApi'
 import {
   CHANNEL_TO_SERVER,
@@ -110,6 +112,7 @@ function NotificationsPage() {
   const [retryMessage] = useRetryMessageMutation()
   const [cancelMessage] = useCancelMessageMutation()
   const [composeMessage] = useComposeMessageMutation()
+  const sendInApp = useSendInApp()
 
   // Sending needs NOTIFICATIONS:SEND; reading what the centre shows is up to the server
   const canManage = can('NOTIFICATIONS:SEND')
@@ -264,26 +267,57 @@ function NotificationsPage() {
   }
 
   async function handleSend(input: ComposeInput) {
+    // In-App goes through POST /notifications, which inserts the bell notifications now. It can't
+    // hold a message for later, so a scheduled one still goes through the notification centre
+    const directInApp = input.channels.includes('In-App') && !input.scheduledFor
+    let centreChannels = directInApp ? input.channels.filter((channel) => channel !== 'In-App') : input.channels
+    const done: string[] = []
     try {
-      const result = await composeMessage({
-        audience: input.audience,
-        channels: input.channels.map((channel) => CHANNEL_TO_SERVER[channel]),
-        title: input.title,
-        message: input.message,
-        ...(input.branchId ? { branch: input.branchId } : {}),
-        ...(input.scheduledFor ? { scheduledFor: `${input.scheduledFor.slice(0, 16)}:00` } : {}),
-        category: input.audience === 'CUSTOMERS' ? 'CUSTOMERS' : 'STAFF',
-      }).unwrap()
-      const skipped = result.skipped.reduce((sum, { count }) => sum + count, 0)
+      if (directInApp) {
+        try {
+          const sent = await sendInApp(input)
+          done.push(
+            sent.created === 0
+              ? 'No staff matched, so no in-app notification was created'
+              : `In-app: ${sent.created} ${sent.created === 1 ? 'person' : 'people'} notified${sent.failed > 0 ? ` (${sent.failed} failed)` : ''}`,
+          )
+        } catch (error) {
+          // 403: someone is outside what this user may reach through that endpoint (a manager writing to the
+          // owner, say). The centre applies its own audience rules, so let it send the In-App part
+          if ((error as { status?: number }).status !== 403) throw error
+          centreChannels = input.channels
+        }
+      }
+      if (centreChannels.length > 0) {
+        const result = await composeMessage({
+          audience: input.audience,
+          channels: centreChannels.map((channel) => CHANNEL_TO_SERVER[channel]),
+          title: input.title,
+          message: input.message,
+          ...(input.branchId ? { branch: input.branchId } : {}),
+          ...(input.scheduledFor ? { scheduledFor: `${input.scheduledFor.slice(0, 16)}:00` } : {}),
+          category: input.audience === 'CUSTOMERS' ? 'CUSTOMERS' : 'STAFF',
+        }).unwrap()
+        const skipped = result.skipped.reduce((sum, { count }) => sum + count, 0)
+        const why = result.skipped.map(({ reason, count }) => `${count} ${SKIP_REASONS[reason] ?? reason}`).join('; ')
+        patchFilters({ tab: result.scheduled ? 'scheduled' : 'all' })
+        done.push(
+          result.recipients === 0
+            ? `Nothing was sent${skipped > 0 ? `: ${why}` : '. No one matches this audience.'}`
+            : `${result.scheduled ? 'Scheduled for' : 'Sent to'} ${result.recipients} ${result.recipients === 1 ? 'recipient' : 'recipients'}${skipped > 0 ? `; skipped: ${why}` : ''}`,
+        )
+      }
       setDialog(null)
-      patchFilters({ tab: result.scheduled ? 'scheduled' : 'all' })
-      setToast(
-        `${result.scheduled ? 'Scheduled for' : 'Sent to'} ${result.recipients} ${result.recipients === 1 ? 'recipient' : 'recipients'}${
-          skipped > 0 ? `; ${skipped} skipped (${result.skipped.map(({ reason, count }) => `${reason}: ${count}`).join(', ')})` : ''
-        }`,
-      )
+      setToast(done.join(' · '))
     } catch (error) {
-      setToast(describeError(error, 'The notification wasn’t sent.'))
+      const reason = describeError(error, 'The notification wasn’t sent.')
+      if (done.length > 0) {
+        // Part of it went out, so don't leave the form open to send that part twice
+        setDialog(null)
+        setToast(`${done.join(' · ')}. The rest wasn’t sent: ${reason}`)
+      } else {
+        setToast(reason)
+      }
     }
   }
 
@@ -508,6 +542,7 @@ function NotificationsPage() {
         <ComposeDialog
           branches={branchOptions}
           branchStatus={{ loading: branchList.isLoading, failed: branchList.isError && !branchList.data, retry: () => void branchList.refetch() }}
+          templates={templates}
           now={now} onClose={() => setDialog(null)} onSend={(input) => void handleSend(input)} />
       )}
       {dialog?.name === 'rule' && (

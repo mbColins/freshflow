@@ -114,7 +114,7 @@ function ForgotPasswordForm() {
               className="size-3.5 shrink-0 text-brand"
               aria-hidden="true"
             />
-            You will recive and otp to the provided email address to reset your password.
+            You will receive a one-time code (OTP) at the email address you provide, to reset your password.
            
           </p>
         </div>
@@ -124,7 +124,7 @@ function ForgotPasswordForm() {
           disabled={isSubmitting}
           className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-brand text-sm font-bold text-white shadow-lg shadow-brand/25 transition hover:bg-brand-dark focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {isSubmitting ? 'Sending…' : 'Send Reset Otp & Instructions'}
+          {isSubmitting ? 'Sending…' : 'Send Reset OTP & Instructions'}
           <ArrowRight className="size-4" aria-hidden="true" />
         </button>
 
