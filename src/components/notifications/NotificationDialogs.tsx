@@ -88,11 +88,14 @@ const COMPOSE_STEPS = ['Audience', 'Channel', 'Message', 'Delivery', 'Review']
 
 export function ComposeDialog({
   branches,
+  branchStatus,
   now,
   onClose,
   onSend,
 }: {
   branches: { id: string; name: string }[]
+  // Where the branch list is in loading, so the dropdown never looks empty by mistake
+  branchStatus: { loading: boolean; failed: boolean; retry: () => void }
   now: number
   onClose: () => void
   onSend: (input: ComposeInput) => void
@@ -180,13 +183,28 @@ export function ComposeDialog({
             })}
           </div>
           <FormField label="Limit to a branch" htmlFor="compose-branch">
-            <select id="compose-branch" value={input.branchId} onChange={(event) => patch({ branchId: event.target.value })} className={`${fieldClass} sm:w-72!`}>
-              <option value="">All branches</option>
+            <select
+              id="compose-branch"
+              value={input.branchId}
+              disabled={branchStatus.loading}
+              aria-busy={branchStatus.loading}
+              onChange={(event) => patch({ branchId: event.target.value })}
+              className={`${fieldClass} sm:w-72!`}
+            >
+              <option value="">{branchStatus.loading ? 'Loading branches…' : 'All branches'}</option>
               {branches.map(({ id, name }) => (
                 <option key={id} value={id}>{name}</option>
               ))}
             </select>
           </FormField>
+          {branchStatus.failed && (
+            <p role="alert" className="text-[11px] text-danger">
+              The branches couldn’t be loaded.{' '}
+              <button type="button" onClick={branchStatus.retry} className="rounded-sm font-semibold underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none">
+                Try again
+              </button>
+            </p>
+          )}
           <p className="text-[11px] text-muted">A manager always sends within their own branch. Platform admins must pick one.</p>
         </div>
       )}

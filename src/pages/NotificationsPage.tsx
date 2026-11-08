@@ -31,7 +31,7 @@ import {
   RULE_RECIPIENTS,
   RULE_TRIGGERS,
 } from '../constants/notifications'
-import useBranches from '../hooks/useBranches'
+import { useGetBranchDropdownQuery } from '../services/branchApi'
 import useCurrentUser from '../hooks/useCurrentUser'
 import useNotifications, { notificationStore } from '../hooks/useNotifications'
 import useNow from '../hooks/useNow'
@@ -47,6 +47,7 @@ import {
   useSetNotificationPreferencesMutation,
   useUpdateCenterItemMutation,
 } from '../services/notificationCenterApi'
+import { useCreateMessageTemplateMutation, useListMessageTemplatesQuery, useUpdateMessageTemplateMutation } from '../services/messageTemplateApi'
 import { useListRolesQuery } from '../services/roleApi'
 import type {
   AppNotification,
@@ -71,6 +72,7 @@ const INBOX = { tab: 'ALL', page: 0, size: 200 }
 const MESSAGE_LOG = { entityType: 'MESSAGE' as const, page: 0, size: 30 }
 const ROLES = { page: 0, size: 100 }
 const NO_NOTIFICATIONS: AppNotification[] = []
+const NO_TEMPLATES: MessageTemplate[] = []
 
 type DialogState =
   | { name: 'compose' }
@@ -86,11 +88,12 @@ const EMPTY_MESSAGES: Partial<Record<NotificationFilters['tab'], string>> = {
 
 function NotificationsPage() {
   const now = useNow()
-  const branches = useBranches()
+  // GET /branch/dropdown: every branch the connected user can see, not a capped page of them
+  const branchList = useGetBranchDropdownQuery()
   const { can, name: actor, user } = useCurrentUser()
   const inboxQuery = useListCenterQuery(INBOX)
   const all = inboxQuery.data ?? NO_NOTIFICATIONS
-  const { rules, templates, log: localLog } = useNotifications()
+  const { rules, log: localLog } = useNotifications()
   const { data: messageAudit } = useListAuditQuery(MESSAGE_LOG)
   const [searchParams, setSearchParams] = useSearchParams()
   const [filters, setFilters] = useState<NotificationFilters>(EMPTY_NOTIFICATION_FILTERS)
@@ -115,6 +118,14 @@ function NotificationsPage() {
   const preferences = serverPreferences ?? DEFAULT_PREFERENCES
   const [savePreferences] = useSetNotificationPreferencesMutation()
   const { data: roleList } = useListRolesQuery(ROLES, { skip: !canManage })
+
+  // Message templates are the business's own, kept on the server. The panel is only drawn for
+  // people who can send, so only they fetch the list; changing one needs its own permission
+  const canEditTemplates = can('NOTIFICATIONS:MANAGE_TEMPLATES')
+  const templateList = useListMessageTemplatesQuery(undefined, { skip: !canManage })
+  const templates = templateList.data ?? NO_TEMPLATES
+  const [createTemplate] = useCreateMessageTemplateMutation()
+  const [updateTemplate] = useUpdateMessageTemplateMutation()
   const roleNames = useMemo(
     () => [...new Set([...(roleList?.items ?? []).map(({ name }) => name), ...Object.keys(preferences.roles)])].sort(),
     [roleList, preferences.roles],
@@ -136,7 +147,7 @@ function NotificationsPage() {
   )
 
   // Notifications and branches refer to a branch by the API's uuid
-  const branchOptions = branches.map(({ uuid, name }) => ({ id: uuid, name }))
+  const branchOptions = useMemo(() => (branchList.data ?? []).map(({ uuid, name }) => ({ id: uuid, name })), [branchList.data])
   const branchName = (id: string) => branchOptions.find((branch) => branch.id === id)?.name ?? id
   // The server hides archived rows and scopes the rest
   const visible = all
@@ -282,10 +293,27 @@ function NotificationsPage() {
     setToast(`Rule “${rule.name}” saved on this page only; automation rules aren’t stored yet`)
   }
 
-  function handleSaveTemplate(template: MessageTemplate) {
-    notificationStore.saveTemplate(template, [editingTemplate ? 'Template modified' : 'Template created', `${template.name} (${template.channel})`], actor)
-    setDialog(null)
-    setToast(`Template “${template.name}” saved on this page only; templates aren’t stored yet`)
+  async function handleSaveTemplate(template: MessageTemplate) {
+    const { id, name, category, channel, language, active, subject, body } = template
+    const fields = { name, category, channel, language, active, subject, body }
+    try {
+      if (editingTemplate) await updateTemplate({ id, changes: fields }).unwrap()
+      else await createTemplate(fields).unwrap()
+      setDialog(null)
+      setToast(`Template “${name}” saved`)
+    } catch (error) {
+      // The dialog stays open with what was typed
+      setToast(describeError(error, 'The template wasn’t saved.'))
+    }
+  }
+
+  async function handleToggleTemplate(template: MessageTemplate) {
+    try {
+      await updateTemplate({ id: template.id, changes: { active: !template.active } }).unwrap()
+      setToast(`Template “${template.name}” ${template.active ? 'disabled' : 'enabled'}`)
+    } catch (error) {
+      setToast(describeError(error, 'The template wasn’t changed.'))
+    }
   }
 
   async function handlePreferences(next: NotificationPreferences) {
@@ -297,7 +325,7 @@ function NotificationsPage() {
   }
 
   const blankRule: AutomationRule = { id: `RULE-${String(rules.length + 1).padStart(2, '0')}`, name: '', trigger: RULE_TRIGGERS[0], conditions: [], logic: 'AND', channels: ['SMS'], audience: RULE_RECIPIENTS[0], active: false, successRate: null, runs: 0 }
-  const blankTemplate: MessageTemplate = { id: `TPL-${String(templates.length + 1).padStart(2, '0')}`, name: '', category: 'orders', channel: 'SMS', language: 'English', active: true, updatedAt: '', uses: 0, subject: '', body: '' }
+  const blankTemplate: MessageTemplate = { id: '', name: '', category: 'orders', channel: 'SMS', language: 'English', active: true, updatedAt: '', subject: '', body: '' }
 
   const header = (
     <div className="space-y-3">
@@ -432,13 +460,13 @@ function NotificationsPage() {
           <div ref={templatesRef} className="scroll-mt-20">
             <TemplatesPanel
               templates={templates}
-              canManage
+              loading={templateList.isLoading}
+              failed={templateList.isError && !templateList.data}
+              onRetry={() => void templateList.refetch()}
+              canManage={canEditTemplates}
               onEdit={(id) => setDialog({ name: 'template', id })}
               onCreate={() => setDialog({ name: 'template', id: '' })}
-              onToggle={(template) => {
-                notificationStore.saveTemplate({ ...template, active: !template.active }, [template.active ? 'Template disabled' : 'Template enabled', template.name], actor)
-                setToast(`Template “${template.name}” ${template.active ? 'disabled' : 'enabled'} on this page only`)
-              }}
+              onToggle={(template) => void handleToggleTemplate(template)}
             />
           </div>
 
@@ -477,13 +505,16 @@ function NotificationsPage() {
 
       <NotificationDrawer notification={openNotification} onClose={() => setOpen(null)} {...actions} />
       {dialog?.name === 'compose' && (
-        <ComposeDialog branches={branchOptions} now={now} onClose={() => setDialog(null)} onSend={(input) => void handleSend(input)} />
+        <ComposeDialog
+          branches={branchOptions}
+          branchStatus={{ loading: branchList.isLoading, failed: branchList.isError && !branchList.data, retry: () => void branchList.refetch() }}
+          now={now} onClose={() => setDialog(null)} onSend={(input) => void handleSend(input)} />
       )}
       {dialog?.name === 'rule' && (
         <RuleDialog rule={editingRule ?? blankRule} onClose={() => setDialog(null)} onSave={handleSaveRule} />
       )}
       {dialog?.name === 'template' && (
-        <TemplateDialog template={editingTemplate ?? blankTemplate} onClose={() => setDialog(null)} onSave={handleSaveTemplate} />
+        <TemplateDialog template={editingTemplate ?? blankTemplate} onClose={() => setDialog(null)} onSave={(template) => void handleSaveTemplate(template)} />
       )}
       {confirm && <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />}
       <span className="sr-only" aria-hidden="true">{user?.username}</span>
