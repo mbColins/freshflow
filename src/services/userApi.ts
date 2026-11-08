@@ -269,6 +269,8 @@ export const {
   useGetUserQuery,
   useListTenantUsersQuery,
   useListBranchUsersQuery,
+  useLazyListTenantUsersQuery,
+  useLazyListBranchUsersQuery,
   useCreateUserMutation,
   useUpdateUserMutation,
   useDeleteUserMutation,

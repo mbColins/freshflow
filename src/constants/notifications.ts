@@ -67,6 +67,21 @@ export const FAILURE_REASONS = [
 
 // Totals for the last 30 days. TODO: read these from the messaging providers.
 
+// Customers aren't staff accounts, so they have no in-app inbox and no push device: the server
+// skips these two channels for them (channel_not_for_customers)
+export const CHANNELS_NOT_FOR_CUSTOMERS: NotificationChannel[] = ['In-App', 'Push']
+
+// Why a recipient was skipped, in words (the server's reason codes)
+export const SKIP_REASONS: Record<string, string> = {
+  channel_not_for_customers: 'customers have no in-app inbox or push',
+  channel_not_preferred: 'the customer chose another channel',
+  no_consent: 'no marketing consent',
+  no_contact: 'no address or phone on file',
+  preference: 'opted out of this kind of alert',
+  inactive: 'inactive account',
+  archived: 'archived customer',
+}
+
 // Who a new message can be sent to: the audiences POST /notification-center/messages takes
 export const COMPOSE_AUDIENCES: { value: string; label: string; kind: 'customer' | 'staff'; help: string }[] = [
   { value: 'CUSTOMERS', label: 'All customers', kind: 'customer', help: 'Those who chose a channel and have an address; promotional messages also need their consent' },

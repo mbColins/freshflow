@@ -155,6 +155,26 @@ export function renderTemplate(body: string) {
   return body.replace(/\{\{(\w+)\}\}/g, (match, name: string) => TEMPLATE_VARIABLES[name] ?? match)
 }
 
+// Fills the variables it has a value for; any other {{name}} stays as written (the server does the same)
+export function fillVariables(text: string, values: Record<string, string>) {
+  return text.replace(/\{\{(\w+)\}\}/g, (match, name: string) => values[name] ?? match)
+}
+
+// A message written by hand isn't about an order, so only these two have a value to fill in
+export const COMPOSE_VARIABLES = ['customerName', 'branchName']
+
+// The variable names a text uses that this app fills in when composing (see COMPOSE_VARIABLES)
+export function getUsedVariables(text: string) {
+  return [...new Set([...text.matchAll(/\{\{(\w+)\}\}/g)].map(([, name]) => name))].filter((name) => COMPOSE_VARIABLES.includes(name))
+}
+
+// Variables the editor offers that a hand-written message can't fill (they need an order)
+export function getOrderOnlyVariables(text: string) {
+  return [...new Set([...text.matchAll(/\{\{(\w+)\}\}/g)].map(([, name]) => name))].filter(
+    (name) => name in TEMPLATE_VARIABLES && !COMPOSE_VARIABLES.includes(name),
+  )
+}
+
 export function getUnknownVariables(body: string) {
   return [...body.matchAll(/\{\{(\w+)\}\}/g)].map(([, name]) => name).filter((name) => !(name in TEMPLATE_VARIABLES))
 }

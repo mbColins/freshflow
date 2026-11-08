@@ -47,6 +47,19 @@ export const inAppNotificationApi = api.injectEndpoints({
       transformResponse: (response: ApiResponse<{ unreadCount?: number } | null>) => response.content?.unreadCount ?? 0,
       providesTags: [UNREAD],
     }),
+    // Inserts a notification for each of these staff (POST /notifications), now: it can't be
+    // scheduled. Needs NOTIFICATIONS:SEND. A tenant user may only reach their own business, and
+    // unless they're the owner only their own branch; one recipient outside that refuses the whole
+    // call (403) so nothing is half sent. At most 500 recipients per call. Resolves to how many were created
+    sendInAppNotification: build.mutation<
+      number,
+      { userUuids: string[]; title: string; message: string; category?: string; priority?: string }
+    >({
+      query: (body) => ({ url: '/notifications', method: 'POST', body }),
+      transformResponse: (response: ApiResponse<{ created?: number } | null>) => response.content?.created ?? 0,
+      // The sender's own bell may have just received one, and the page's message log lists it
+      invalidatesTags: [INBOX, UNREAD, { type: 'Audit', id: 'LIST' }],
+    }),
     // Shown as read at once; undone if the server refuses
     markNotificationRead: build.mutation<void, string>({
       query: (id) => ({ url: `/notifications/${encodeURIComponent(id)}/read`, method: 'PATCH' }),
@@ -80,5 +93,9 @@ export const inAppNotificationApi = api.injectEndpoints({
   }),
 })
 
-export const { useListMyNotificationsQuery, useGetUnreadCountQuery, useMarkNotificationReadMutation } =
-  inAppNotificationApi
+export const {
+  useListMyNotificationsQuery,
+  useGetUnreadCountQuery,
+  useSendInAppNotificationMutation,
+  useMarkNotificationReadMutation,
+} = inAppNotificationApi

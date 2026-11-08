@@ -2,6 +2,12 @@ import { NETWORK_ERROR_MESSAGE, errorMessage, serverMessage } from './apiErrors'
 
 // What the backend's reason codes mean to the person at the counter
 const REASONS: Record<string, string> = {
+  // Message templates
+  message_template_name_already_exists: 'You already have a template with that name.',
+  message_template_name_required: 'Give the template a name.',
+  message_template_body_required: 'Write the message.',
+  message_template_unknown_variable: 'The text uses a variable that doesn’t exist. Use the “Insert a variable” buttons.',
+  message_variable_needs_an_order: 'This message uses a variable that only exists for an order (such as {{orderNumber}}). Remove it before sending.',
   // Orders
   invalid_status_transition: 'An order moves one step at a time. Only a manager can skip ahead or go back.',
   balance_outstanding: 'The order still has a balance. Record the payment first, or ask a manager to complete it.',

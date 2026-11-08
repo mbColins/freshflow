@@ -5,6 +5,10 @@ const GAP = 4
 // Open upward when there is less than this much room below the trigger
 const MIN_SPACE_BELOW = 260
 
+// The enabled items of an open menu, in order
+const menuItems = (panel: HTMLElement | null) =>
+  Array.from(panel?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? [])
+
 type MenuProps = {
   trigger: ReactNode
   triggerClassName: string
@@ -25,6 +29,8 @@ function Menu({
   // Fixed positioning keeps the panel from being clipped by scrolling containers
   const [position, setPosition] = useState<CSSProperties | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const open = position !== null
 
   useEffect(() => {
@@ -34,7 +40,11 @@ function Menu({
       if (!rootRef.current?.contains(event.target as Node)) close()
     }
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') close()
+      if (event.key === 'Escape') {
+        close()
+        // Back to the button that opened it, so keyboard users keep their place
+        triggerRef.current?.focus()
+      }
     }
     function handleScroll(event: Event) {
       if (!rootRef.current?.contains(event.target as Node)) close()
@@ -50,6 +60,30 @@ function Menu({
       window.removeEventListener('resize', close)
     }
   }, [open])
+
+  // On open, move into the menu so the arrow keys work straight away
+  useEffect(() => {
+    if (open) menuItems(panelRef.current)[0]?.focus()
+  }, [open])
+
+  // Arrow keys, Home and End move between items, as in the standard menu pattern. Tab leaves and closes
+  function handlePanelKeyDown(event: React.KeyboardEvent) {
+    const list = menuItems(panelRef.current)
+    if (list.length === 0) return
+    const current = list.indexOf(document.activeElement as HTMLElement)
+    const target: Record<string, number> = {
+      ArrowDown: (current + 1) % list.length,
+      ArrowUp: (current - 1 + list.length) % list.length,
+      Home: 0,
+      End: list.length - 1,
+    }
+    if (event.key in target) {
+      event.preventDefault()
+      list[target[event.key]].focus()
+    } else if (event.key === 'Tab') {
+      setPosition(null)
+    }
+  }
 
   function toggle() {
     if (open || !rootRef.current) {
@@ -71,9 +105,10 @@ function Menu({
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label}
-        aria-haspopup="true"
+        aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
         onClick={toggle}
@@ -83,6 +118,10 @@ function Menu({
       </button>
       {position && (
         <div
+          ref={panelRef}
+          role="menu"
+          aria-label={label}
+          onKeyDown={handlePanelKeyDown}
           style={position}
           className="fixed z-50 max-h-80 min-w-44 overflow-y-auto rounded-lg bg-white p-1 shadow-lg ring-1 ring-line"
         >
@@ -109,6 +148,7 @@ export function MenuItem({
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={onSelect}
       disabled={disabled}
       className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-semibold whitespace-nowrap transition hover:bg-field focus-visible:bg-field focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${

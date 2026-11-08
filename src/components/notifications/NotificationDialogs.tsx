@@ -4,6 +4,7 @@ import {
   COMPOSE_AUDIENCES,
   CATEGORIES,
   CHANNELS,
+  CHANNELS_NOT_FOR_CUSTOMERS,
   RULE_FIELDS,
   RULE_RECIPIENTS,
   RULE_TRIGGERS,
@@ -19,6 +20,7 @@ import type {
 import {
   describeRule,
   formatStamp,
+  getOrderOnlyVariables,
   getUnknownVariables,
   renderTemplate,
 } from '../../utils/notifications'
@@ -26,18 +28,30 @@ import { fieldClass, iconButton, primaryButton, secondaryButton, sectionTitle } 
 import Modal from '../ui/Modal'
 import FormField from '../ui/FormField'
 
-function ChannelPicker({ value, onChange }: { value: NotificationChannel[]; onChange: (channels: NotificationChannel[]) => void }) {
+function ChannelPicker({
+  value,
+  onChange,
+  unavailable = [],
+}: {
+  value: NotificationChannel[]
+  onChange: (channels: NotificationChannel[]) => void
+  // Channels that can't be picked here, shown dimmed
+  unavailable?: NotificationChannel[]
+}) {
   return (
     <div role="group" aria-label="Channels" className="flex flex-wrap gap-1.5">
       {CHANNELS.map((channel) => {
         const on = value.includes(channel)
+        const blocked = unavailable.includes(channel)
         return (
           <button
             key={channel}
             type="button"
             aria-pressed={on}
+            disabled={blocked}
+            title={blocked ? 'Not available for this audience' : undefined}
             onClick={() => onChange(on ? value.filter((item) => item !== channel) : CHANNELS.filter((item) => item === channel || value.includes(item)))}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none ${
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 ${
               on ? 'bg-brand text-white' : 'bg-field text-ink hover:bg-line'
             }`}
           >
@@ -89,6 +103,7 @@ const COMPOSE_STEPS = ['Audience', 'Channel', 'Message', 'Delivery', 'Review']
 export function ComposeDialog({
   branches,
   branchStatus,
+  templates,
   now,
   onClose,
   onSend,
@@ -96,16 +111,39 @@ export function ComposeDialog({
   branches: { id: string; name: string }[]
   // Where the branch list is in loading, so the dropdown never looks empty by mistake
   branchStatus: { loading: boolean; failed: boolean; retry: () => void }
+  // The business's message templates; only the active ones for the chosen channels are offered
+  templates: MessageTemplate[]
   now: number
   onClose: () => void
   onSend: (input: ComposeInput) => void
 }) {
   const [step, setStep] = useState(0)
   const [later, setLater] = useState(false)
-  const [input, setInput] = useState<ComposeInput>({ audience: COMPOSE_AUDIENCES[0].value, channels: ['In-App'], title: '', message: '', branchId: '', scheduledFor: '' })
+  const [input, setInput] = useState<ComposeInput>({ audience: COMPOSE_AUDIENCES[0].value, channels: ['Email'], title: '', message: '', branchId: '', scheduledFor: '' })
+  const [templateId, setTemplateId] = useState('')
+  const toCustomers = COMPOSE_AUDIENCES.find(({ value }) => value === input.audience)?.kind === 'customer'
+  // Staff get In-App alerts in the bell; customers can only be reached outside the app
+  function chooseAudience(audience: string, kind: 'customer' | 'staff') {
+    const channels = kind === 'customer' ? input.channels.filter((channel) => !CHANNELS_NOT_FOR_CUSTOMERS.includes(channel)) : input.channels
+    const wasCustomers = toCustomers
+    // Nothing left to send on, or switching from the customers' default: start from the sensible channel
+    const next = channels.length > 0 && (kind === 'customer' || !wasCustomers) ? channels : [kind === 'customer' ? 'Email' : 'In-App']
+    patch({ audience, channels: next as NotificationChannel[] })
+  }
   const patch = (change: Partial<ComposeInput>) => setInput({ ...input, ...change })
   const last = COMPOSE_STEPS.length - 1
+  const offered = templates.filter(({ active, channel }) => active && input.channels.includes(channel))
+  // Filling a template copies its wording in; it stays editable and isn't linked afterwards
+  function applyTemplate(id: string) {
+    setTemplateId(id)
+    const template = offered.find((item) => item.id === id)
+    if (template) patch({ title: template.subject, message: template.body })
+  }
+  // A hand-written message isn't about an order, so these variables would have no value
+  const orderOnly = getOrderOnlyVariables(`${input.title} ${input.message}`)
   const problems = [
+    ...(toCustomers && input.channels.some((channel) => CHANNELS_NOT_FOR_CUSTOMERS.includes(channel)) ? ['In-App and Push can’t reach customers. Choose Email, SMS or WhatsApp (Channel).'] : []),
+    ...(orderOnly.length > 0 ? [`Remove ${orderOnly.map((name) => `{{${name}}}`).join(', ')}: it only has a value for an order (Message).`] : []),
     ...(input.channels.length === 0 ? ['Choose at least one channel (Channel).'] : []),
     ...(!input.title.trim() ? ['Add a title (Message).'] : []),
     ...(!input.message.trim() ? ['Write the message (Message).'] : []),
@@ -169,7 +207,7 @@ export function ComposeDialog({
                   type="button"
                   role="radio"
                   aria-checked={selected}
-                  onClick={() => patch({ audience: value })}
+                  onClick={() => chooseAudience(value, kind)}
                   className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-xs transition focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none ${
                     selected ? 'bg-brand/10 ring-2 ring-brand' : 'bg-field hover:bg-line'
                   }`}
@@ -212,24 +250,45 @@ export function ComposeDialog({
       {step === 1 && (
         <div className="space-y-3">
           <p className="text-xs text-muted">Choose one or more channels. The same message goes out on each.</p>
-          <ChannelPicker value={input.channels} onChange={(channels) => patch({ channels })} />
+          <ChannelPicker value={input.channels} onChange={(channels) => patch({ channels })} unavailable={toCustomers ? CHANNELS_NOT_FOR_CUSTOMERS : []} />
+          <p className="text-[11px] text-muted">
+            {toCustomers
+              ? 'Customers can be reached by email, SMS or WhatsApp. In-App alerts go to staff, in their notification bell.'
+              : 'In-App adds the message to each staff member’s notification bell.'}
+          </p>
         </div>
       )}
 
       {step === 2 && (
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-3">
+            {templates.length > 0 && (
+              <FormField label="Use a template" htmlFor="compose-template">
+                <select id="compose-template" value={offered.some(({ id }) => id === templateId) ? templateId : ''} onChange={(event) => applyTemplate(event.target.value)} className={fieldClass}>
+                  <option value="">{offered.length === 0 ? 'No active template for the chosen channels' : 'Write it myself'}</option>
+                  {offered.map((template) => (
+                    <option key={template.id} value={template.id}>{template.name} · {template.channel} · {template.language}</option>
+                  ))}
+                </select>
+              </FormField>
+            )}
             <FormField label="Title" htmlFor="compose-title">
               <input id="compose-title" autoComplete="off" placeholder="e.g. Holiday opening hours" value={input.title} onChange={(event) => patch({ title: event.target.value })} className={fieldClass} />
             </FormField>
             <FormField label="Message" htmlFor="compose-message">
               <textarea id="compose-message" rows={5} value={input.message} onChange={(event) => patch({ message: event.target.value })} className={`${fieldClass} h-auto py-2`} />
             </FormField>
+            <p className="text-[11px] text-muted">{'{{customerName}}'} and {'{{branchName}}'} are filled in for each person who receives it.</p>
+            {orderOnly.length > 0 && (
+              <p role="alert" className="text-[11px] text-danger">
+                {orderOnly.map((name) => `{{${name}}}`).join(', ')} only {orderOnly.length === 1 ? 'has' : 'have'} a value for an order, so {orderOnly.length === 1 ? 'it' : 'they'} can’t be sent here. Remove {orderOnly.length === 1 ? 'it' : 'them'} or pick another template.
+              </p>
+            )}
           </div>
           <div>
             <p className={sectionTitle}>Preview: {input.channels[0] ?? 'In-App'}</p>
             <div className="mt-2">
-              <MessagePreview channel={input.channels[0] ?? 'In-App'} title={input.title} body={input.message} />
+              <MessagePreview channel={input.channels[0] ?? 'In-App'} title={renderTemplate(input.title)} body={renderTemplate(input.message)} />
             </div>
           </div>
         </div>
@@ -281,7 +340,7 @@ export function ComposeDialog({
               </div>
             ))}
           </dl>
-          <MessagePreview channel={input.channels[0] ?? 'In-App'} title={input.title} body={input.message} />
+          <MessagePreview channel={input.channels[0] ?? 'In-App'} title={renderTemplate(input.title)} body={renderTemplate(input.message)} />
           {problems.length > 0 ? (
             <ul className="space-y-1 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger" role="alert">
               {problems.map((problem) => (
