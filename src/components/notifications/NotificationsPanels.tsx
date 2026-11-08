@@ -120,12 +120,19 @@ export function RulesPanel({
 
 export function TemplatesPanel({
   templates,
+  loading,
+  failed,
+  onRetry,
   canManage,
   onEdit,
   onCreate,
   onToggle,
 }: {
   templates: MessageTemplate[]
+  loading: boolean
+  // Set when the list couldn't be loaded and there is nothing to show instead
+  failed: boolean
+  onRetry: () => void
   canManage: boolean
   onEdit: (id: string) => void
   onCreate: () => void
@@ -145,8 +152,15 @@ export function TemplatesPanel({
         )
       }
     >
-      {templates.length === 0 ? (
-        <PanelEmpty>No templates yet.</PanelEmpty>
+      {loading ? (
+        <PanelEmpty>Loading templates…</PanelEmpty>
+      ) : failed ? (
+        <div role="alert" className="flex flex-col items-start gap-2 text-xs text-muted">
+          <p>The templates couldn’t be loaded.</p>
+          <button type="button" onClick={onRetry} className={`${secondaryButton} h-7`}>Try Again</button>
+        </div>
+      ) : templates.length === 0 ? (
+        <PanelEmpty>No templates yet. Create one to reuse its wording.</PanelEmpty>
       ) : (
         <div className="relative overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-xs">
@@ -158,7 +172,6 @@ export function TemplatesPanel({
                 <th scope="col" className="py-2 pr-3">Language</th>
                 <th scope="col" className="py-2 pr-3">Status</th>
                 <th scope="col" className="py-2 pr-3">Updated</th>
-                <th scope="col" className="py-2 pr-3 text-right">Uses</th>
                 {canManage && <th scope="col" className="py-2 text-right"><span className="sr-only">Actions</span></th>}
               </tr>
             </thead>
@@ -174,7 +187,6 @@ export function TemplatesPanel({
                   <td className="py-2 pr-3 text-muted">{template.language}</td>
                   <td className="py-2 pr-3"><Badge tone={template.active ? 'success' : 'neutral'}>{template.active ? 'Active' : 'Disabled'}</Badge></td>
                   <td className="py-2 pr-3 whitespace-nowrap text-muted">{formatDate(template.updatedAt)}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums">{template.uses.toLocaleString('en-US')}</td>
                   {canManage && (
                     <td className="py-2 text-right whitespace-nowrap">
                       <span className="inline-flex gap-1.5">

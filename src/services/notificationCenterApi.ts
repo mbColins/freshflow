@@ -35,7 +35,7 @@ type RawItem = {
   createdBy?: string | null
 }
 
-const CHANNEL_FROM_SERVER: Record<string, NotificationChannel> = {
+export const CHANNEL_FROM_SERVER: Record<string, NotificationChannel> = {
   IN_APP: 'In-App',
   EMAIL: 'Email',
   SMS: 'SMS',

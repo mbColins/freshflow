@@ -92,7 +92,6 @@ export type MessageTemplate = {
   language: 'English' | 'French'
   active: boolean
   updatedAt: string
-  uses: number
   subject: string
   body: string
 }

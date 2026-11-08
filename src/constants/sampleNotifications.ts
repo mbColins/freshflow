@@ -1,7 +1,6 @@
 import type {
   AppNotification,
   AutomationRule,
-  MessageTemplate,
   NotificationCategory,
   NotificationChannel,
   NotificationLogEntry,
@@ -96,16 +95,6 @@ export const SAMPLE_RULES: AutomationRule[] = [
   { id: 'RULE-05', name: 'Inventory critical', trigger: 'Stock falls below its critical level', conditions: [], logic: 'AND', channels: ['In-App', 'Email'], audience: 'Inventory manager', active: true, successRate: 96.0, runs: 25 },
   { id: 'RULE-06', name: 'Pickup reminder', trigger: 'A pickup is 2 hours away', conditions: [], logic: 'AND', channels: ['SMS'], audience: 'Customer', active: true, successRate: 97.8, runs: 398 },
   { id: 'RULE-07', name: 'VIP express delay', trigger: 'An order passes its due time', conditions: [{ field: 'Order priority', value: 'Express' }, { field: 'Customer group', value: 'VIP' }], logic: 'OR', channels: ['Push', 'In-App'], audience: 'Operations manager', active: false, successRate: null, runs: 0 },
-]
-
-export const SAMPLE_TEMPLATES: MessageTemplate[] = [
-  { id: 'TPL-01', name: 'Order ready', category: 'orders', channel: 'WhatsApp', language: 'English', active: true, updatedAt: ago(60 * 24 * 3), uses: 1284, subject: 'Your order is ready', body: 'Hi {{customerName}}, your order #{{orderNumber}} is ready for pickup at {{branchName}}. Collect it {{pickupDate}}.' },
-  { id: 'TPL-02', name: 'Order received', category: 'orders', channel: 'SMS', language: 'English', active: true, updatedAt: ago(60 * 24 * 12), uses: 1410, subject: 'Order received', body: 'FreshFlow: we received order #{{orderNumber}}. Track it at {{trackingLink}}.' },
-  { id: 'TPL-03', name: 'Commande prête', category: 'orders', channel: 'SMS', language: 'French', active: true, updatedAt: ago(60 * 24 * 12), uses: 402, subject: 'Votre commande est prête', body: 'Bonjour {{customerName}}, votre commande #{{orderNumber}} est prête à {{branchName}}.' },
-  { id: 'TPL-04', name: 'Delivery reminder', category: 'delivery', channel: 'WhatsApp', language: 'English', active: true, updatedAt: ago(60 * 24 * 20), uses: 611, subject: 'Delivery on its way', body: 'Hi {{customerName}}, order #{{orderNumber}} will be delivered {{deliveryDate}}. Follow the driver: {{trackingLink}}' },
-  { id: 'TPL-05', name: 'Payment failed', category: 'payments', channel: 'SMS', language: 'English', active: true, updatedAt: ago(60 * 24 * 8), uses: 96, subject: 'Payment failed', body: 'FreshFlow: your payment of {{amount}} for order #{{orderNumber}} did not go through. Please try again.' },
-  { id: 'TPL-06', name: 'Payment confirmation', category: 'payments', channel: 'Email', language: 'English', active: true, updatedAt: ago(60 * 24 * 30), uses: 742, subject: 'Receipt for order #{{orderNumber}}', body: 'Dear {{customerName}},\n\nWe received {{amount}} for order #{{orderNumber}} at {{branchName}}. Thank you for choosing FreshFlow.' },
-  { id: 'TPL-07', name: 'Welcome message', category: 'customers', channel: 'WhatsApp', language: 'English', active: false, updatedAt: ago(60 * 24 * 45), uses: 188, subject: 'Welcome to FreshFlow', body: 'Welcome {{customerName}}! Your nearest branch is {{branchName}}.' },
 ]
 
 export const SAMPLE_NOTIFICATION_LOG: NotificationLogEntry[] = [

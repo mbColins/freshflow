@@ -111,6 +111,7 @@ export const api = createApi({
     'Inventory',
     'Logistics',
     'Machine',
+    'MessageTemplate',
     'Notification',
     'Order',
     'Payment',
