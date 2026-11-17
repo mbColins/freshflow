@@ -45,11 +45,12 @@ async function refreshSession(
 ) {
   const { refreshToken } = (api.getState() as StateWithAuth).auth
   if (!refreshToken) return false
-  // TODO: confirm the method with the backend
+  // The token goes in the body, never in the URL, so it stays out of logs
   const result = await rawBaseQuery(
     {
-      url: `/auth/refresh/${encodeURIComponent(refreshToken)}`,
+      url: '/auth/refresh',
       method: 'POST',
+      body: { refresh_token: refreshToken },
     },
     api,
     extraOptions,

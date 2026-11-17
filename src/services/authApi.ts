@@ -21,10 +21,10 @@ import type {
 } from '../types/auth'
 import { api } from './api'
 
-// Forgot password doesn't say how long its code is valid; assumed to match
-// the 10 minutes login reports
-// TODO: confirm with the backend
-const DEFAULT_OTP_TTL_MS = 30_000
+// Forgot password doesn't say how long its code is valid. The backend's
+// default (appconfig optExpiryTime) is 300 seconds; a business can change it,
+// in which case the server still enforces its own expiry.
+const DEFAULT_OTP_TTL_MS = 5 * 60_000
 
 function pendingVerification(verification: OtpVerification, expiresIn: number) {
   return { ...verification, expiresIn, expiresAt: Date.now() + expiresIn }
@@ -75,14 +75,15 @@ export const authApi = api.injectEndpoints({
         }
       },
     }),
-    // POST /auth/logout/{refresh_token}
+    // POST /auth/logout with { refresh_token }
     logout: build.mutation<void, void>({
       queryFn: async (_arg, { getState }, _extra, baseQuery) => {
         const { refreshToken } = (getState() as RootState).auth
         if (!refreshToken) return { data: undefined }
         const result = await baseQuery({
-          url: `/auth/logout/${encodeURIComponent(refreshToken)}`,
+          url: '/auth/logout',
           method: 'POST',
+          body: { refresh_token: refreshToken },
         })
         return result.error ? { error: result.error } : { data: undefined }
       },

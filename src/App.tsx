@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import GuestOnly from './components/auth/GuestOnly'
 import RequireAuth from './components/auth/RequireAuth'
+import RequireMenu from './components/auth/RequireMenu'
 import AppLayout from './components/layout/AppLayout'
 import AccountRequestsPage from './pages/AccountRequestsPage'
 import BranchDetailPage from './pages/BranchDetailPage'
@@ -57,36 +58,76 @@ function App() {
         <Route element={<RequireAuth />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<DashboardPage />} />
-            <Route path="/orders" element={<OrdersPage />} />
-            <Route path="/customers" element={<CustomersPage />} />
-            <Route path="/customers/:customerId" element={<CustomerProfilePage />} />
-            <Route path="/pickup-delivery" element={<LogisticsPage />} />
-            <Route path="/pickup-delivery/drivers" element={<DriversPage />} />
-            <Route path="/pickup-delivery/zones" element={<DeliveryZonesPage />} />
-            <Route path="/payments" element={<PaymentsPage />} />
-            <Route path="/inventory" element={<InventoryPage />} />
-            <Route path="/staff" element={<StaffPage />} />
-            <Route path="/staff/roles" element={<RolesPage />} />
-            <Route path="/branches" element={<BranchesPage />} />
-            <Route path="/branches/:branchId" element={<BranchDetailPage />} />
-            <Route path="/machines" element={<MachinesPage />} />
-            <Route path="/machines/:machineId" element={<MachineDetailPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/pricing/subscriptions" element={<SubscriptionPlansPage />} />
-            <Route path="/promotions" element={<PromotionsPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/settings/business" element={<BusinessSettingsPage />} />
-            <Route path="/audit" element={<AuditLogPage />} />
-            <Route path="/billing" element={<BillingPage />} />
-            <Route path="/notifications" element={<NotificationsPage />} />
-            <Route path="/operations" element={<OperationsPage />} />
-            <Route path="/services" element={<ServicesPage />} />
-            <Route path="/services/:serviceId" element={<ServiceDetailPage />} />
-            <Route path="/tenants" element={<TenantsPage />} />
-            <Route path="/platform/plans" element={<PlatformPlansPage />} />
-            <Route path="/platform/account-requests" element={<AccountRequestsPage />} />
-            <Route path="/platform/demo-requests" element={<DemoRequestsPage />} />
+            {/* Each group opens only for users whose profile grants its menu */}
+            <Route element={<RequireMenu menu="ORDERS" />}>
+              <Route path="/orders" element={<OrdersPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="CUSTOMERS" />}>
+              <Route path="/customers" element={<CustomersPage />} />
+              <Route path="/customers/:customerId" element={<CustomerProfilePage />} />
+            </Route>
+            <Route element={<RequireMenu menu="LOGISTICS" />}>
+              <Route path="/pickup-delivery" element={<LogisticsPage />} />
+              <Route path="/pickup-delivery/drivers" element={<DriversPage />} />
+              <Route path="/pickup-delivery/zones" element={<DeliveryZonesPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="PAYMENTS" />}>
+              <Route path="/payments" element={<PaymentsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="INVENTORY" />}>
+              <Route path="/inventory" element={<InventoryPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="STAFF" />}>
+              <Route path="/staff" element={<StaffPage />} />
+              <Route path="/staff/roles" element={<RolesPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="BRANCHES" />}>
+              <Route path="/branches" element={<BranchesPage />} />
+              <Route path="/branches/:branchId" element={<BranchDetailPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="MACHINES" />}>
+              <Route path="/machines" element={<MachinesPage />} />
+              <Route path="/machines/:machineId" element={<MachineDetailPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="PRICING" />}>
+              <Route path="/pricing" element={<PricingPage />} />
+              <Route path="/pricing/subscriptions" element={<SubscriptionPlansPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="PROMOTIONS" />}>
+              <Route path="/promotions" element={<PromotionsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="REPORTS" />}>
+              <Route path="/reports" element={<ReportsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="SETTINGS" />}>
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/settings/business" element={<BusinessSettingsPage />} />
+              <Route path="/audit" element={<AuditLogPage />} />
+              <Route path="/billing" element={<BillingPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="NOTIFICATIONS" />}>
+              <Route path="/notifications" element={<NotificationsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="OPERATIONS" />}>
+              <Route path="/operations" element={<OperationsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="SERVICES" />}>
+              <Route path="/services" element={<ServicesPage />} />
+              <Route path="/services/:serviceId" element={<ServiceDetailPage />} />
+            </Route>
+            {/* Platform operator only: closed unless the user is a confirmed platform admin */}
+            <Route element={<RequireMenu menu="TENANTS" />}>
+              <Route path="/tenants" element={<TenantsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="PLATFORM_PLANS" />}>
+              <Route path="/platform/plans" element={<PlatformPlansPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="ACCOUNT_REQUESTS" />}>
+              <Route path="/platform/account-requests" element={<AccountRequestsPage />} />
+            </Route>
+            <Route element={<RequireMenu menu="DEMO_REQUESTS" />}>
+              <Route path="/platform/demo-requests" element={<DemoRequestsPage />} />
+            </Route>
           </Route>
         </Route>
         {/* Sign-in and recovery: signed-in users are sent to the app */}

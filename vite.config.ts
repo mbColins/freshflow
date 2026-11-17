@@ -36,8 +36,26 @@ function securityHeaders(apiUrl: string): Plugin {
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd())
+  // The API URL is baked into the bundle and its CSP at build time. Refuse a
+  // production build that would ship a missing or cleartext address (for
+  // example a leftover http://localhost from .env.local).
+  if (command === 'build' && process.env.ALLOW_INSECURE_API !== '1') {
+    let protocol = ''
+    try {
+      protocol = new URL(env.VITE_API_URL).protocol
+    } catch {
+      // Missing or malformed: handled below
+    }
+    if (protocol !== 'https:') {
+      throw new Error(
+        `VITE_API_URL must be an https:// URL for a production build (got "${env.VITE_API_URL ?? ''}"). ` +
+          'Set it in .env.production or the build environment. ' +
+          'For a local test build only, set ALLOW_INSECURE_API=1.',
+      )
+    }
+  }
   return {
     plugins: [react(), tailwindcss(), securityHeaders(env.VITE_API_URL)],
     build: {
