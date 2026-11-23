@@ -140,6 +140,7 @@ fields exist. **Ready** = the backend exists and only the UI isn't connected
 | 16 | Services extensions | Services, service detail | Service CRUD | Partial: promotions on a service, audit trail, import and export | P2 | `16-services-extensions.md` |
 | 17 | Tenants, branches, platform subscription, sign-in | Tenants, Branches, Platform Plans, sign-in | Tenant, branch and auth CRUD | Partial: suspension reason and usage, plan-limit enforcement, branch overview stats, voice OTP, sign out other devices, sessions | P2 | `17-tenant-branch-auth-gaps.md` |
 | 18 | Reports | Reports (menu entry, no page yet) | Revenue only | Missing: report endpoints and exports | P3 | `18-reports.md` |
+| 19 | Session security | Sign-in, every screen | Tokens returned in the JSON body, CORS and authorization not audited for production | Missing: HttpOnly refresh cookie with rotation, strict CORS origins, authorization and sign-in protection checklist | P1 | `19-session-security.md` |
 
 Priority: **P1** blocks a daily workflow (taking money, running the floor,
 access control, dashboard). **P2** is needed for a complete product. **P3** is

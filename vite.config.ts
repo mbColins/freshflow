@@ -12,8 +12,8 @@ function securityHeaders(apiUrl: string): Plugin {
   const csp = [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     // The API origin serves uploaded images such as tenant logos
     `img-src 'self' data: blob: ${apiOrigin}`.trim(),
     `connect-src 'self' ${apiOrigin}`.trim(),
