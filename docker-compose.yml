@@ -8,10 +8,14 @@ services:
         # Must be an https:// URL.
         VITE_API_URL: ${VITE_API_URL:?VITE_API_URL is required}
     restart: unless-stopped
-    # No host port mapping: Coolify's proxy routes the domain to this port.
+    # Coolify's proxy routes the domain to this port.
     # Set the domain in Coolify as https://your-domain.com:8080
     expose:
       - "8080"
+    # Direct access for testing at http://<server-ip>:3000. Remove once the
+    # app is served only through a domain.
+    ports:
+      - "3000:8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
       interval: 30s
