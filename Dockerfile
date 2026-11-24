@@ -13,6 +13,9 @@ COPY . .
 # vite.config.ts requires an https:// URL for production builds.
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
+# Set to 1 only for test deployments pointing at a non-https API.
+ARG ALLOW_INSECURE_API
+ENV ALLOW_INSECURE_API=$ALLOW_INSECURE_API
 
 RUN npm run build
 
