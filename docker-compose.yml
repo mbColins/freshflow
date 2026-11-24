@@ -7,6 +7,9 @@ services:
         # Set in Coolify (Environment Variables, enable "Build Variable").
         # Must be an https:// URL.
         VITE_API_URL: ${VITE_API_URL:?VITE_API_URL is required}
+        # Set to 1 in Coolify only for test deployments that use an http:// API.
+        # Leave unset for production so the https check stays active.
+        ALLOW_INSECURE_API: ${ALLOW_INSECURE_API:-}
     restart: unless-stopped
     # Coolify's proxy routes the domain to this port.
     # Set the domain in Coolify as https://your-domain.com:8080
